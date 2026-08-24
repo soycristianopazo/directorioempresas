@@ -12,7 +12,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 \i supabase/tests/helpers.sql
 
-select plan(34);
+select plan(42);
 
 
 -- ─── Preparación ────────────────────────────────────────────────────────────
@@ -234,12 +234,21 @@ select ok(
   'PERMISOS · VIEWER NO puede administrar miembros'
 );
 
-select throws_ok(
+-- Matiz importante: un UPDATE bloqueado por RLS NO lanza excepción. Las filas
+-- simplemente no son visibles para el USING de la policy, así que la sentencia
+-- tiene éxito afectando cero filas. Por eso se verifica el dato, no el error.
+select lives_ok(
   $$ update public.organizations set legal_name = 'Secuestrada'
      where id = (select alfa_id from t_ids) $$,
-  null,
-  null,
-  'PERMISOS · el UPDATE de un VIEWER no modifica ninguna fila'
+  'PERMISOS · el UPDATE de un VIEWER no lanza error…'
+);
+
+select tests.clear_authentication();
+
+select is(
+  (select legal_name from public.organizations o join t_ids t on t.alfa_id = o.id),
+  'Transportes Alfa SpA',
+  'PERMISOS · …pero RLS impide que modifique una sola fila'
 );
 
 
@@ -282,7 +291,7 @@ select is(
 
 select throws_ok(
   $$ select public.switch_organization((select alfa_id from t_ids)) $$,
-  'P0001',
+  '42501',
   'No pertenece a esa organización',
   'switch_organization rechaza una organización ajena'
 );
@@ -343,9 +352,9 @@ select tests.clear_authentication();
 
 select throws_ok(
   $$ update public.audit_logs set action = 'manipulado' where true $$,
-  null,
-  null,
-  'AUDITORÍA · audit_logs no admite UPDATE ni siquiera como superusuario'
+  '42501',
+  'audit_logs es inmutable: UPDATE no está permitido',
+  'AUDITORÍA · audit_logs rechaza el UPDATE incluso como superusuario'
 );
 
 

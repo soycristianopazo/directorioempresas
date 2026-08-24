@@ -213,7 +213,7 @@ create index platform_admins_active_idx
 create table public.organization_invitations (
   id              uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id) on delete cascade,
-  email           citext not null,
+  email           extensions.citext not null,
   role_id         uuid not null references public.roles (id) on delete restrict,
 
   -- Se guarda solo el hash del token. Si se filtra la tabla, los tokens

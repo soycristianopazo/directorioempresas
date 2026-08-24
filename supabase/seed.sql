@@ -29,7 +29,7 @@ begin
   )
   select
     u.id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-    u.email, crypt('Password123', gen_salt('bf')), now(),
+    u.email, extensions.crypt('Password123', extensions.gen_salt('bf')), now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     jsonb_build_object('first_name', u.first_name, 'last_name', u.last_name),
     now(), now()

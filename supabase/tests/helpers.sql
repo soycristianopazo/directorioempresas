@@ -25,7 +25,7 @@ begin
   )
   values (
     p_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', p_email,
-    crypt('password123', gen_salt('bf')), now(),
+    extensions.crypt('password123', extensions.gen_salt('bf')), now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     jsonb_build_object('first_name', split_part(p_email, '@', 1)),
     now(), now()

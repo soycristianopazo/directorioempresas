@@ -30,7 +30,7 @@ create table public.organizations (
   value_proposition text,
   website_url       text,
   linkedin_url      text,
-  general_email     citext,
+  general_email     extensions.citext,
   general_phone     text,
 
   -- Estado y visibilidad

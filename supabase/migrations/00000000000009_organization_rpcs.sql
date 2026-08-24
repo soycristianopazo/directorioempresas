@@ -156,7 +156,10 @@ set search_path = ''
 as $$
 declare
   v_user_id    uuid := auth.uid();
-  v_user_email citext;
+  -- text, no citext: con `search_path = ''` los operadores de citext (que vive
+  -- en el schema `extensions`) no se resuelven. La comparación se hace abajo
+  -- con lower() sobre text, que preserva la semántica case-insensitive.
+  v_user_email text;
   v_inv        public.organization_invitations%rowtype;
   v_member_id  uuid;
   v_token_hash text;
@@ -192,9 +195,9 @@ begin
   end if;
 
   -- La invitación es para un email concreto: no es un pase transferible.
-  select u.email into v_user_email from auth.users u where u.id = v_user_id;
+  select u.email::text into v_user_email from auth.users u where u.id = v_user_id;
 
-  if v_user_email is distinct from v_inv.email then
+  if lower(coalesce(v_user_email, '')) is distinct from lower(v_inv.email::text) then
     raise exception 'La invitación fue emitida para otra dirección de correo'
       using errcode = 'insufficient_privilege';
   end if;
