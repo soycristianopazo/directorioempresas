@@ -15,10 +15,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [activeOrgId, setActiveOrgId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
 
   const fetchMe = useCallback(async () => {
     const { data } = await api.get('/auth/me');
     setUser(data.user);
+    setIsPlatformAdmin(Boolean(data.is_platform_admin));
     setActiveOrgId((current) => current ?? data.user.last_org_id ?? null);
     return data.user;
   }, []);
@@ -50,6 +52,7 @@ export function AuthProvider({ children }) {
     function onSessionExpired() {
       setUser(null);
       setActiveOrgId(null);
+      setIsPlatformAdmin(false);
     }
     window.addEventListener('auth:session-expired', onSessionExpired);
 
@@ -78,6 +81,9 @@ export function AuthProvider({ children }) {
     });
     setAccessToken(data.access_token);
     setUser(data.user);
+    // Una cuenta recién creada nunca es platform admin — se otorga aparte,
+    // nunca en el propio registro.
+    setIsPlatformAdmin(false);
     return data.user;
   }, []);
 
@@ -88,6 +94,7 @@ export function AuthProvider({ children }) {
       setAccessToken(null);
       setUser(null);
       setActiveOrgId(null);
+      setIsPlatformAdmin(false);
     }
   }, []);
 
@@ -106,6 +113,7 @@ export function AuthProvider({ children }) {
       user,
       loading,
       isAuthenticated: Boolean(user),
+      isPlatformAdmin,
       memberships: user?.memberships ?? [],
       activeOrg,
       login,
@@ -114,7 +122,17 @@ export function AuthProvider({ children }) {
       switchOrganization,
       refresh: fetchMe,
     }),
-    [user, loading, activeOrg, login, register, logout, switchOrganization, fetchMe],
+    [
+      user,
+      loading,
+      isPlatformAdmin,
+      activeOrg,
+      login,
+      register,
+      logout,
+      switchOrganization,
+      fetchMe,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

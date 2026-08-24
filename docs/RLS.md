@@ -1,6 +1,13 @@
 # RLS — Referencia operativa
 
 > Estado **implementado**. Para la estrategia completa ver [01-ARQUITECTURA.md §I](01-ARQUITECTURA.md#i-seguridad-y-estrategia-rls-en-supabase).
+>
+> Nota de stack: este documento asumía originalmente Supabase Auth
+> (`auth.uid()`, PostgREST, pgTAP). Ese diseño se abandonó — el backend es
+> FastAPI + SQLAlchemy async, con identidad propia fijada por transacción vía
+> `SET LOCAL app.current_user_id` (ver `backend/app/db/rls.py`), y sin suite
+> pgTAP: la verificación es manual (dry-run de migraciones + pruebas
+> end-to-end contra la API real). Lo que sigue describe el estado real.
 
 ---
 
@@ -8,84 +15,87 @@
 
 1. **RLS activo en el 100% de las tablas.** Sin policy no se pasa. Una tabla nueva sin `enable row level security` es un bug que bloquea el merge.
 2. **Toda comprobación va por un helper de `app`.** `SECURITY DEFINER` + `STABLE` + `set search_path = ''`. Sin las tres, o hay recursión, o hay lentitud, o hay escalada de privilegios.
-3. **Siempre `(select auth.uid())`, nunca `auth.uid()` suelto.** El subselect se evalúa una vez por sentencia (InitPlan); la llamada directa, una vez por fila.
-4. **RLS es la defensa 1, no la única.** Toda Server Action pasa además por `src/server/policies/authorize.ts`.
-5. **Ninguna policy se escribe sin su prueba pgTAP.** El CI falla si el aislamiento se rompe.
+3. **Siempre `app.current_user_id()`, nunca `current_setting(...)` suelto en una policy.** La función ya envuelve el `current_setting` con `missing_ok=true` y el cast a `uuid`; llamarla directamente se evalúa como InitPlan (una vez por sentencia, no por fila).
+4. **`SET LOCAL`, nunca `SET`.** El backend conecta vía el Transaction Pooler de Supabase (Supavisor); `SET` a secas filtraría la identidad de un usuario a la siguiente petición que reutilice la misma conexión física.
+5. **RLS es la defensa 1, no la única.** El servicio (`backend/app/services/*.py`) verifica el permiso relevante ANTES de mutar — no depende de que RLS bloquee un `UPDATE` y lo detecte por sus efectos.
+6. **Ningún cast a un tipo de extensión (`ltree`, …) sin calificar el schema**, dentro de una función que no sea `SECURITY DEFINER`. `app_user` no tiene `extensions` en su `search_path` (a diferencia de `postgres`) — ver la nota extensa en `backend/alembic/sql/0012_admin_divisions.sql`.
 
 ---
 
-## Helpers disponibles (`supabase/migrations/…_rls_helpers.sql`)
+## Helpers disponibles
 
-| Función | Devuelve | Uso |
-|---|---|---|
-| `app.current_user_id()` | `uuid` | `auth.uid()` cacheado |
-| `app.is_platform_admin()` | `boolean` | SUPER_ADMIN o PLATFORM_ADMIN |
-| `app.has_platform_role(code)` | `boolean` | Rol de plataforma concreto. SUPER_ADMIN satisface cualquiera |
-| `app.is_member_of(org)` | `boolean` | Membresía activa. **La condición base de casi todo** |
-| `app.current_member_orgs()` | `setof uuid` | Para `org_id in (select …)` |
-| `app.has_permission(org, perm)` | `boolean` | Permiso efectivo vía roles |
-| `app.effective_permissions(org)` | `setof text` | Todos los permisos, para la UI |
-| `app.org_has_capability(org, cap)` | `boolean` | BUYER / SUPPLIER / PLATFORM_ADMIN |
-| `app.viewer_has_capability(cap)` | `boolean` | ¿Alguna org del usuario tiene esta capacidad? |
-| `app.can_view_with_visibility(org, vis)` | `boolean` | Visibilidad graduada |
+| Función | Archivo | Devuelve | Uso |
+|---|---|---|---|
+| `app.current_user_id()` | `0002` | `uuid` | Identidad de la petición, fijada por `SET LOCAL` |
+| `app.is_system_context()` | `0002` | `boolean` | ¿La transacción declaró `app.system_context = on`? (jobs, registro, invitaciones) |
+| `app.is_platform_admin()` | `0007` | `boolean` | SUPER_ADMIN o PLATFORM_ADMIN |
+| `app.has_platform_role(code)` | `0007` | `boolean` | Rol de plataforma concreto. SUPER_ADMIN satisface cualquiera |
+| `app.has_platform_permission(perm)` | `0018` | `boolean` | Permiso de plataforma efectivo, sin organización — vía `platform_admins` + `role_permissions` |
+| `app.is_member_of(org)` | `0007` | `boolean` | Membresía activa. **La condición base de casi todo** |
+| `app.current_member_orgs()` | `0007` | `setof uuid` | Para `org_id in (select …)` |
+| `app.has_permission(org, perm)` | `0007` | `boolean` | Permiso efectivo vía roles de organización |
+| `app.effective_permissions(org)` | `0007` | `setof text` | Todos los permisos, para la UI |
+| `app.org_has_capability(org, cap)` | `0007` | `boolean` | BUYER / SUPPLIER / PLATFORM_ADMIN |
+| `app.viewer_has_capability(cap)` | `0007` | `boolean` | ¿Alguna org del usuario tiene esta capacidad? |
+| `app.can_view_with_visibility(org, vis)` | `0007` | `boolean` | Visibilidad graduada |
+| `app.maintain_hierarchy_path()` | `0012` | trigger | Calcula `level`/`path` (ltree) en `admin_divisions`/`taxonomy_nodes`/`industries` |
 
-El schema `app` **no está expuesto en PostgREST** (`supabase/config.toml → api.schemas`). Los dos únicos envoltorios públicos son `public.my_permissions(org)` y `public.am_i_platform_admin()`, y ambos responden solo sobre el usuario de la sesión.
+El schema `app` no se expone directamente a ningún cliente: el backend conecta como `app_user`, que tiene `USAGE` sobre `app` pero el frontend nunca ve SQL — todo pasa por las rutas de FastAPI.
 
 ---
 
 ## Matriz de acceso implementada
 
-| Tabla | anon | Miembro | Miembro con permiso | Plataforma |
+| Tabla | anon | Miembro/usuario | Con permiso | Plataforma |
 |---|---|---|---|---|
-| `profiles` | ✗ | Propio + colegas (lectura) | — | Lectura total |
-| `organizations` | Solo `ACTIVE` + `PUBLIC` | Lectura | `organization.update` → escritura | Total |
-| `organization_capabilities` | Si la org es pública | Lectura | `organization.update` | Total |
-| `organization_business_roles` | Si la org es pública | Lectura | `organization.update` | Total |
-| `organization_legal_identifiers` | **✗ nunca** | Lectura | `organization.update` | Total |
-| `permissions` | ✗ | Lectura | — | SUPER_ADMIN escribe |
-| `roles` | ✗ | Sistema + los de su org | `role.manage` → roles custom | SUPER_ADMIN escribe |
-| `role_permissions` | ✗ | Lectura de los visibles | `role.manage` | SUPER_ADMIN escribe |
-| `organization_members` | ✗ | Propias + equipo | `member.manage` → UPDATE/DELETE | Lectura total |
-| `member_roles` | ✗ | Lectura | `member.manage` | Total |
-| `platform_admins` | ✗ | Solo la propia fila | — | SUPER_ADMIN total |
+| `users` | ✗ | Propia fila | — | Contexto de sistema (registro) |
+| `profiles` | — | Propia + colegas de org | — | Lectura total (implícito vía `is_platform_admin()` en `has_permission`) |
+| `organizations` | Según `visibility` (`can_view_with_visibility`) | Lectura si es miembro | `organization.update` → escritura | Total |
+| `organization_capabilities` | Si la org es visible | Lectura | `organization.update` | Total |
+| `organization_legal_identifiers` | ✗ | Lectura si es miembro | `organization.update` | Total |
+| `permissions` | ✗ | Lectura | — | Solo lectura para `app_user` (0010 revoca escritura) |
+| `roles` | ✗ | Sistema + los de su org | `role.manage` → roles custom | — |
+| `organization_members` | ✗ | Propias + equipo | `member.manage` → gestión | Lectura total |
+| `platform_admins` | ✗ | ✗ | — | Gestión por SUPER_ADMIN |
 | `organization_invitations` | ✗ | ✗ | `member.manage` | — |
 | `audit_logs` | ✗ | ✗ | `audit.read` | Lectura total |
-| `domain_events` | ✗ | ✗ | ✗ | Solo `service_role` |
+| `domain_events` | ✗ | ✗ | ✗ | Solo contexto de sistema |
+| `countries` / `currencies` / `fx_rates` / `units_of_measure` / `languages` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+| `admin_divisions` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+| `taxonomy_nodes` y relacionadas (`translations`, `synonyms`, `external_mappings`) | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+| `industries` y `industry_translations` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+| `attribute_definitions` / `attribute_options` / `taxonomy_node_attributes` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+
+Las tablas de referencia/taxonomía (fase 2) son deliberadamente públicas por diseño incluso para `anon`: un selector de comuna o el árbol de categorías no tiene nada que ocultar, y exponerlo permite que la landing y cualquier página pública futura lo consuman sin autenticación.
 
 ---
 
 ## Decisiones que conviene no revertir
 
-**`organization_members` no tiene policy de INSERT.** Es deliberado. Si un usuario pudiera insertarse a sí mismo en `organization_members`, el aislamiento multiempresa completo se cae: bastaría un `INSERT` con el `organization_id` de cualquier empresa para ver todos sus datos. Entrar a una organización pasa exclusivamente por `create_organization()` o `accept_invitation()`, ambas `SECURITY DEFINER` con validación interna.
+**`organization_members` no tiene policy de INSERT directa desde el cliente.** Es deliberado. Entrar a una organización pasa exclusivamente por `services.organizations.create_organization()` o `services.team.accept_invitation()`, ambas corriendo en contexto de sistema con validación interna — nunca un `INSERT` directo del usuario.
 
-**`organizations` tampoco tiene policy de INSERT.** Un `INSERT` directo dejaría una organización sin miembros: invisible para todos, imposible de recuperar y ocupando un slug. `create_organization()` crea organización, capacidades, RUT, membresía y rol de dueño en una sola transacción.
+**`organizations` tampoco tiene policy de INSERT directa.** `create_organization()` crea organización, capacidades, RUT, membresía y rol de dueño en una sola transacción de SQLAlchemy.
 
-**El RUT nunca es visible para `anon`.** Aunque el perfil sea público. Publicarlo abierto convierte el directorio en un dataset de scraping. Se expone a miembros y a compradores autenticados.
+**`audit_logs` es inmutable de verdad.** `REVOKE UPDATE, DELETE` para `app_user`. Una auditoría que el administrador puede editar no es auditoría.
 
-**`audit_logs` es inmutable de verdad.** `REVOKE UPDATE, DELETE, TRUNCATE` incluido para `service_role`, más un trigger `BEFORE UPDATE OR DELETE` que lanza excepción. Una auditoría que el administrador puede editar no es auditoría.
+**`domain_events` tiene RLS activo y cero policies de usuario.** Es un outbox interno; solo se toca en contexto de sistema.
 
-**`domain_events` tiene RLS activo y cero policies.** No es un descuido: es un outbox interno cuyo payload puede cruzar organizaciones. Solo lo consumen los workers con `service_role`.
+**Las vistas llevan `security_invoker = true`** (`v_my_organizations`, `v_effective_node_attributes`). Sin esa opción una vista corre con los privilegios de su dueño y se convierte en un agujero silencioso que rodea todas las policies de las tablas subyacentes.
 
-**Las vistas llevan `security_invoker = true`.** Sin esa opción una vista corre con los privilegios de su dueño y se convierte en un agujero silencioso que rodea todas las policies de las tablas subyacentes.
+**Ninguna tabla usa `FORCE ROW LEVEL SECURITY`.** `ENABLE` alcanza porque `app_user` nunca es dueño de una tabla (las crea `postgres` vía Alembic). `FORCE` rompería la vía de escape que los helpers `SECURITY DEFINER` necesitan para no recursionar contra sus propias policies — probado y reproducido una vez (`StatementTooComplexError: stack depth limit exceeded`), documentado en detalle en `0010_hardening.sql`. No reintroducir esto "por seguridad extra": es exactamente el bug ya resuelto.
+
+**Los datos de referencia/taxonomía son de lectura pública por diseño**, con escritura acotada a `platform.manage_taxonomy`, verificado en dos capas: RLS (`app.has_platform_permission()`) y el servicio Python (mismo chequeo, antes de mutar, para evitar que RLS bloquee un `UPDATE` ya en curso).
 
 ---
 
-## Pruebas
+## Verificación
 
-`supabase/tests/001_identity_rls.test.sql` — 34 aserciones sobre seis identidades:
+No hay suite pgTAP en este stack. La verificación de una migración/policy nueva sigue este flujo:
 
-| Identidad | Qué demuestra |
-|---|---|
-| ana (ORG_OWNER de Alfa) | Ve y administra lo suyo |
-| bruno (VIEWER de Alfa) | Lee pero **no** puede editar ni administrar miembros |
-| carla (dueña de Beta) | **No ve absolutamente nada** de Alfa |
-| diego (miembro de Alfa y Beta) | Pertenencia múltiple real (§48) y cambio de organización |
-| elena (sin organización) | No ve ninguna organización |
-| anónimo | Solo perfiles `ACTIVE` + `PUBLIC`, jamás un RUT |
-| admin de plataforma | Acceso transversal |
+1. `node scripts/db-dryrun-migrations.mjs` — aplica todo el historial de migraciones dentro de una transacción revertida, contra la base real. Detecta errores de sintaxis/orden sin arriesgar datos.
+2. `alembic upgrade head` — aplicación real.
+3. Verificación estructural (conteos, `select` directos) vía un script Node ad-hoc con `pg`, o `psql`.
+4. Verificación de RLS end-to-end contra la API real: un usuario sin el permiso relevante debe recibir 403 (o ver un conjunto vacío en lectura filtrada); un usuario con el permiso, o el contexto de sistema, deben poder operar. Se prueba con `curl` autenticando primero vía `/api/auth/login` y usando el `access_token` devuelto.
+5. Regresión: volver a correr `backend/seed.py` completo y confirmar que las fases anteriores (auth, organizaciones, equipo) siguen funcionando.
 
-```bash
-npm run db:test
-```
-
-Al agregar una tabla, agregar su fila a la matriz de arriba y sus aserciones al test. **Un test que confirma que el competidor NO ve la oferta ajena vale más que cualquier feature.**
+Al agregar una tabla: fila nueva en la matriz de arriba, y repetir el flujo 1-4 para esa tabla específica antes de darla por verificada.

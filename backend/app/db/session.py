@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -68,6 +69,29 @@ engine = create_async_engine(
         },
     },
 )
+
+
+# asyncpg no trae un codec incorporado para `ltree` (tipo de la extensión
+# homónima, instalada en el esquema `extensions` — ver 0001_foundation.sql):
+# sin registrar uno, cualquier SELECT que toque una columna ltree
+# (taxonomy_nodes.path, admin_divisions.path, industries.path, fase 2) revienta
+# con "asyncpg.exceptions.InternalServerError: unknown type / codec". Se
+# registra como texto plano, que es exactamente lo que la capa de aplicación
+# necesita: la app nunca opera sobre `path` con operadores propios de ltree en
+# Python, solo lo lee y arma el árbol con level/parent_id.
+#
+# `run_async` es el mecanismo documentado por SQLAlchemy para configurar un
+# DBAPI connection de asyncpg desde un hook síncrono como "connect": el
+# adaptador expone ese método justamente para poder despachar una llamada
+# async (`set_type_codec`) al conectar.
+@event.listens_for(engine.sync_engine, "connect")
+def _register_ltree_codec(dbapi_connection, _connection_record) -> None:
+    dbapi_connection.run_async(
+        lambda raw: raw.set_type_codec(
+            "ltree", encoder=str, decoder=str, schema="extensions", format="text"
+        )
+    )
+
 
 SessionLocal = async_sessionmaker(
     bind=engine,

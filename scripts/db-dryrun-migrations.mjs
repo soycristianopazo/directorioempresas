@@ -98,4 +98,4 @@ if (failed) {
   process.exit(1)
 }
 
-console.log('\n✓ Las 10 migraciones aplican en limpio. Transacción revertida: la base no cambió.')
+console.log(`\n✓ Las ${files.length} migraciones aplican en limpio. Transacción revertida: la base no cambió.`)

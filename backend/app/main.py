@@ -15,8 +15,13 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.v1.admin_taxonomy import industries_router as admin_industries_router
+from app.api.v1.admin_taxonomy import router as admin_taxonomy_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.organizations import router as organizations_router
+from app.api.v1.reference import router as reference_router
+from app.api.v1.taxonomy import industries_router as industries_router
+from app.api.v1.taxonomy import router as taxonomy_router
 from app.api.v1.team import router as team_router
 from app.core.config import settings
 from app.db.session import dispose_engine
@@ -54,6 +59,11 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api")
 app.include_router(organizations_router, prefix="/api")
 app.include_router(team_router, prefix="/api")
+app.include_router(reference_router, prefix="/api")
+app.include_router(taxonomy_router, prefix="/api")
+app.include_router(industries_router, prefix="/api")
+app.include_router(admin_taxonomy_router, prefix="/api")
+app.include_router(admin_industries_router, prefix="/api")
 
 
 @app.exception_handler(Exception)

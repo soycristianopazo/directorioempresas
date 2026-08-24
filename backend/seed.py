@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import asyncio
 
+from sqlalchemy import text
+
 from app.db.rls import session_for_system
+from app.repositories import members as members_repo
 from app.services import auth as auth_service
 from app.services import organizations as org_service
 from app.services import team as team_service
@@ -32,6 +35,10 @@ USERS = [
     {"first_name": "Diego", "last_name": "Fuentes", "email": "diego@ingenieriasur.cl"},
 ]
 
+# Cuenta de backoffice: no pertenece a ninguna organización, solo tiene un rol
+# de plataforma. Se usa para probar /admin/taxonomia de punta a punta (fase 2).
+PLATFORM_ADMIN_EMAIL = "admin@directorioempresas.cl"
+
 
 async def wipe_existing() -> None:
     """Limpia corridas previas del seed para poder ejecutarlo repetidas veces."""
@@ -40,13 +47,13 @@ async def wipe_existing() -> None:
     from app.models.organization import Organization
     from app.models.user import User
 
-    emails = tuple(u["email"] for u in USERS)
+    emails = tuple(u["email"] for u in USERS) + (PLATFORM_ADMIN_EMAIL,)
 
     async with session_for_system() as db:
         await db.execute(
             delete(Organization).where(
                 Organization.slug.in_(
-                    ["transportes-alfa", "minera-beta", "ingenieria-sur"]
+                    ["transportes-alfa", "minera-beta", "ingenieria-del-sur"]
                 )
             )
         )
@@ -188,11 +195,35 @@ async def main() -> None:
     )
     print(f"  ✓ Invitación pendiente en Minera Beta: {pending_url}")
 
+    print("\nCreando cuenta de backoffice...")
+    admin_result = await auth_service.register(
+        first_name="Admin",
+        last_name="Plataforma",
+        email=PLATFORM_ADMIN_EMAIL,
+        password=PASSWORD,
+    )
+    async with session_for_system() as db:
+        platform_admin_role = await members_repo.find_role_by_code(db, "PLATFORM_ADMIN")
+        if platform_admin_role is None:
+            raise RuntimeError("No existe el rol de sistema PLATFORM_ADMIN")
+        await db.execute(
+            text(
+                "insert into public.platform_admins (user_id, role_id) "
+                "values (:user_id, :role_id)"
+            ),
+            {
+                "user_id": str(admin_result.user_id),
+                "role_id": str(platform_admin_role.id),
+            },
+        )
+    print(f"  ✓ {PLATFORM_ADMIN_EMAIL} ({admin_result.user_id}) — rol PLATFORM_ADMIN")
+
     print("\n" + "=" * 70)
     print("Listo. Contraseña para todas las cuentas:", PASSWORD)
     print("=" * 70)
     for u in USERS:
         print(f"  {u['email']}")
+    print(f"  {PLATFORM_ADMIN_EMAIL} (backoffice, sin organización)")
     print("\nTransportes Alfa  → publicada, pública, comprador+proveedor")
     print("Minera Beta       → activa, solo registrados, comprador")
     print("Ingeniería del Sur→ EN BORRADOR a propósito (perfil incompleto)")

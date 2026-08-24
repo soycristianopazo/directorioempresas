@@ -1,7 +1,9 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { ProtectedRoute } from '@/router/ProtectedRoute';
 import { RequireOrg } from '@/router/RequireOrg';
+import { RequirePlatformAdmin } from '@/router/RequirePlatformAdmin';
 import { AppLayout } from '@/components/AppLayout';
+import { AdminLayout } from '@/components/AdminLayout';
 import HomePage from '@/pages/HomePage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
@@ -10,6 +12,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import CompanyPage from '@/pages/CompanyPage';
 import TeamPage from '@/pages/TeamPage';
 import InvitationPage from '@/pages/InvitationPage';
+import AdminTaxonomyPage from '@/pages/admin/AdminTaxonomyPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 
 /**
@@ -40,6 +43,17 @@ export const router = createBrowserRouter([
               { path: '/empresa', element: <CompanyPage /> },
               { path: '/empresa/equipo', element: <TeamPage /> },
             ],
+          },
+        ],
+      },
+      {
+        // Hermano de RequireOrg, no anidado: un platform admin puro (cuenta
+        // de backoffice) puede no pertenecer a ninguna organización.
+        element: <RequirePlatformAdmin />,
+        children: [
+          {
+            element: <AdminLayout />,
+            children: [{ path: '/admin/taxonomia', element: <AdminTaxonomyPage /> }],
           },
         ],
       },
