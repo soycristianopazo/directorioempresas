@@ -336,17 +336,24 @@ comment on function app.normalize_rut(text) is
 -- Los privilegios se otorgan en 0010, cuando todas las tablas están creadas.
 -- Aquí solo se declara la identidad:
 --
---   nologin    · no se conecta directamente; la aplicación asume este rol
+--   login      · el backend conecta DIRECTAMENTE como este rol, con
+--                DATABASE_URL. Necesita LOGIN para eso: un rol NOLOGIN
+--                rechaza cualquier intento de autenticación, directo o vía
+--                el pooler, así que no serviría como rol de conexión.
 --   noinherit  · no hereda privilegios de los roles a los que pertenezca
 --
 -- Lo que NO tiene, y es lo importante: BYPASSRLS, y la propiedad de ninguna
 -- tabla. Un rol dueño de las tablas omitiría las policies aunque estuvieran
 -- activas.
+--
+-- La contraseña NO se fija aquí: hacerlo dejaría un secreto en el repositorio.
+-- Se establece aparte con scripts/db-setup-app-role.mjs, que genera una
+-- aleatoria y la escribe solo en el .env local, nunca en el historial de git.
 -- ============================================================================
 
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'app_user') then
-    create role app_user nologin noinherit;
+    create role app_user login noinherit;
   end if;
 end $$;

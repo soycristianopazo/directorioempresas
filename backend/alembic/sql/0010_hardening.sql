@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0010 · Endurecimiento: rol de aplicación, permisos y FORCE RLS
+-- 0010 · Endurecimiento: rol de aplicación, permisos y RLS
 -- ----------------------------------------------------------------------------
 -- ÚLTIMA migración a propósito: recorre todas las tablas del esquema, así que
 -- solo tiene sentido cuando ya existen todas.
@@ -43,10 +43,7 @@ grant select on public.permissions to app_user;
 
 
 -- ============================================================================
--- FORCE ROW LEVEL SECURITY
--- ----------------------------------------------------------------------------
--- Sin esto, cualquier conexión con el rol dueño omite las policies. Es la
--- línea que separa "RLS configurado" de "RLS aplicado".
+-- ENABLE ROW LEVEL SECURITY (sin FORCE — ver la nota extensa más abajo)
 -- ============================================================================
 
 do $$
@@ -62,9 +59,40 @@ begin
       and not c.relispartition
   loop
     execute format('alter table public.%I enable row level security', r.relname);
-    execute format('alter table public.%I force row level security', r.relname);
   end loop;
 end $$;
+
+-- ============================================================================
+-- Por qué NO se usa FORCE ROW LEVEL SECURITY (aunque suene más seguro)
+-- ----------------------------------------------------------------------------
+-- ENABLE activa las policies para cualquier rol que NO sea el dueño de la
+-- tabla ni tenga BYPASSRLS. `app_user` no es dueño de nada — las tablas las
+-- crea `postgres` vía Alembic — así que ENABLE ya es suficiente para él sin
+-- ambigüedad: jamás las omite.
+--
+-- FORCE existe para un caso distinto: obligar a que RLS aplique incluso
+-- cuando la conexión ES el dueño de la tabla. Se probó aquí como medida de
+-- "cinturón y tirantes" y produjo recursión infinita real
+-- (`StatementTooComplexError: stack depth limit exceeded`) al verificar
+-- contra la base — no una hipótesis, un fallo reproducido:
+--
+--   app.is_member_of() es SECURITY DEFINER, con dueño `postgres`. Para evitar
+--   que sus propias consultas internas a organization_members disparen RLS
+--   de nuevo (lo que causaría la recursión: is_member_of → policy de
+--   organization_members → is_member_of → ...), SECURITY DEFINER hace que esa
+--   consulta interna corra con los privilegios de `postgres`, que es dueño de
+--   la tabla y por tanto normalmente queda fuera del alcance de RLS.
+--
+--   FORCE ROW LEVEL SECURITY rompe exactamente esa vía de escape: obliga a
+--   aplicar RLS incluso al dueño, así que la consulta interna de
+--   is_member_of() vuelve a pasar por la policy de organization_members, que
+--   vuelve a llamar a is_member_of() — recursión sin fin hasta agotar la pila.
+--
+-- La combinación correcta para este diseño es exactamente ENABLE sin FORCE:
+-- protege a `app_user` (que es lo único que hace falta, porque es el único
+-- rol con el que la aplicación conecta) sin desactivar el mecanismo con el
+-- que los propios helpers de RLS evitan recursividad.
+-- ============================================================================
 
 
 

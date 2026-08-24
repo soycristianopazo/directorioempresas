@@ -83,18 +83,19 @@ async def session_for_system() -> AsyncIterator[AsyncSession]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependencias de FastAPI
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-async def get_session(request) -> AsyncIterator[AsyncSession]:  # noqa: ANN001
-    """Sesión para rutas autenticadas.
-
-    ``request.state.user_id`` lo deja el middleware de autenticación tras
-    validar el JWT. Si no hay token válido, queda en None y la sesión actúa
-    como anónima: las policies harán el resto.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    async with session_for_user(user_id) as session:
-        yield session
+#
+# La dependencia que combina "usuario del JWT" + "sesión con esa identidad"
+# vive en app.api.deps, no aquí, y por una razón concreta: necesita depender
+# explícitamente de app.api.deps.get_current_user_id para que FastAPI resuelva
+# el usuario ANTES de abrir la sesión. Leer `request.state.user_id` sin esa
+# relación de dependencia explícita no lo garantiza — FastAPI no promete un
+# orden entre dependencias hermanas que no dependen unas de otras — y en un
+# fallo silencioso eso se traduce en una sesión con `app.current_user_id`
+# vacío, es decir, tratando a un usuario autenticado como anónimo.
+#
+# Poner esa función aquí también crearía un import circular: este módulo la
+# necesitaría depender de app.api.deps, y app.api.deps ya depende de este
+# módulo para las funciones de más abajo.
 
 
 async def get_public_session() -> AsyncIterator[AsyncSession]:

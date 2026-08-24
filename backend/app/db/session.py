@@ -11,11 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 
@@ -46,12 +42,13 @@ from app.core.config import settings
 # pool_recycle=1800
 #   Por debajo del timeout del pooler, para reciclar antes de que él corte.
 
-# OJO con dónde va cada uno. `statement_cache_size` es un argumento de
-# conexión de asyncpg y viaja en connect_args. `prepared_statement_cache_size`
-# y `prepared_statement_name_func` son parámetros del DIALECTO de SQLAlchemy y
-# van como kwargs de create_async_engine. Ponerlos dentro de connect_args no
-# da error: asyncpg los ignora en silencio y el problema del pooler sigue ahí,
-# esperando a manifestarse bajo concurrencia en producción.
+# Los tres van juntos dentro de connect_args. El adaptador de asyncpg que usa
+# SQLAlchemy recibe un único diccionario de argumentos de conexión: separa
+# `prepared_statement_cache_size` y `prepared_statement_name_func` de ese
+# mismo diccionario antes de reenviar el resto a asyncpg.connect() — no son
+# kwargs de create_async_engine(). Pasarlos ahí en vez de en connect_args
+# revienta en el arranque con "Invalid argument(s)": lo que sigue es lo
+# verificado contra la fuente del dialecto, no una suposición.
 engine = create_async_engine(
     settings.database_url,
     echo=settings.sql_echo,
@@ -59,10 +56,10 @@ engine = create_async_engine(
     max_overflow=5,
     pool_recycle=1800,
     pool_pre_ping=False,
-    prepared_statement_cache_size=0,
-    prepared_statement_name_func=lambda: f"__asyncpg_{uuid4()}__",
     connect_args={
         "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
         "server_settings": {
             "application_name": settings.app_name,
             # jit desactivado: con consultas OLTP cortas el tiempo de

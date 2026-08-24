@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "directorio-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "name": "backend-api",
+      "runtimeExecutable": "backend/.venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "backend"],
+      "port": 8000
     },
     {
       "name": "frontend-dev",

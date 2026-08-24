@@ -18,19 +18,34 @@ email-validator==2.2.0
 
 # ── Autenticación ────────────────────────────────────────────────────────────
 PyJWT==2.11.0
-# bcrypt fijado a 4.1.x: passlib 1.7.4 lee bcrypt.__about__.__version__, que
-# desapareció en bcrypt 4.2. Con 4.2+ passlib emite un error al arrancar y,
-# según la versión, deja de poder verificar hashes.
+# passlib 1.7.4 (la última publicada) lee bcrypt.__about__.__version__ para
+# detectar el backend, y ese atributo ya no existe en NINGUNA versión de
+# bcrypt 4.x instalada aquí — no es un corte en 4.2 como se pensaba al fijar
+# esta versión. El síntoma es un warning al importar ("(trapped) error
+# reading bcrypt version"): pasa por la propia ruta de manejo de errores de
+# passlib, que cae a una detección alternativa y sigue hasheando y
+# verificando bien — confirmado hasheando contraseñas reales en seed.py.
+# Fijar 4.1.3 no evita el warning entonces (no hay versión que lo evite con
+# esta passlib), pero sí dejarlo estable y no perseguir una comparación de
+# versiones en movimiento.
 bcrypt==4.1.3
 passlib[bcrypt]==1.7.4
-python-jose[cryptography]==3.3.0
+# python-jose NO está aquí a propósito, aunque el stack original lo mencione.
+# app/core/security.py firma con PyJWT + HS256, que es HMAC puro (hashlib) y
+# no necesita el paquete `cryptography` en absoluto. python-jose[cryptography]
+# arrastra `cryptography`, que en esta máquina intenta compilar desde fuente
+# con Rust/maturin y falla — por una dependencia que además duplicaba a PyJWT
+# sin usarse. Si en el futuro se necesitan algoritmos asimétricos (RS256/ES256,
+# por ejemplo para validar tokens de un proveedor de identidad externo), ahí sí
+# se vuelve a evaluar cryptography, ya con una razón concreta.
 
 # ── HTML público (perfiles indexables) ───────────────────────────────────────
 jinja2==3.1.4
 
 # ── Testing ──────────────────────────────────────────────────────────────────
 pytest==9.0.0
-pytest-asyncio==0.24.0
+# 0.24.0 exige pytest<9; 1.4.0 es la primera línea con soporte para pytest 9.
+pytest-asyncio==1.4.0
 anyio==4.12.0
 httpx==0.28.1
 

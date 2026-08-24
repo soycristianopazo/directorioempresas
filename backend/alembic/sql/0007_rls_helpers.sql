@@ -20,16 +20,34 @@
 -- ============================================================================
 
 -- ─── Identidad ──────────────────────────────────────────────────────────────
-
-create or replace function app.current_user_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select app.current_user_id();
-$$;
+--
+-- app.current_user_id() NO se redefine aquí. Ya la define la migración 0002
+-- (backend/alembic/sql/0002_auth_and_rls.sql), leyendo la variable de sesión
+-- con current_setting('app.current_user_id', true).
+--
+-- Este archivo es un port automático del rls_helpers.sql original de Supabase,
+-- que SÍ tenía aquí un wrapper legítimo (`select auth.uid();`, porque en aquel
+-- diseño auth.uid() vivía en el schema auth de Supabase). El script de port
+-- reemplazó todo `auth.uid()` por `app.current_user_id()` en bloque — y ese
+-- reemplazo, aplicado a ESTA definición en particular, convirtió el wrapper
+-- en una función que se llama a sí misma:
+--
+--   select app.current_user_id();   -- dentro del cuerpo de app.current_user_id()
+--
+-- `create or replace function` no protesta por una función que se referencia
+-- a sí misma — es SQL válido — así que esto no falló al aplicar la migración.
+-- Falló en producción, en el primer INSERT/SELECT real que la invocara:
+-- "StatementTooComplexError: stack depth limit exceeded". Se reprodujo incluso
+-- conectado como `postgres` (superusuario, que bypassa RLS por completo), lo
+-- que en su momento descartó erróneamente cualquier hipótesis relacionada con
+-- RLS/FORCE/pooler — la única pista real era leer pg_get_functiondef() y
+-- comparar contra la fuente, que es como se encontró esto.
+--
+-- Moraleja para el próximo port en bloque de este tipo: un find/replace de
+-- `auth.uid()` → `app.current_user_id()` es correcto en CUALQUIER llamada
+-- DESDE OTRA función, pero es exactamente incorrecto dentro de la definición
+-- del wrapper que reemplaza a auth.uid() en sí — ese caso necesita revisión
+-- manual, no reemplazo ciego.
 
 
 -- ─── Plataforma ─────────────────────────────────────────────────────────────

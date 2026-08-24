@@ -3,7 +3,7 @@
 -- ----------------------------------------------------------------------------
 -- Reemplaza a auth.users de GoTrue y a auth.uid().
 --
--- El endurecimiento (rol app_user, grants y FORCE RLS) NO va aquí: necesita
+-- El endurecimiento (rol app_user y grants) NO va aquí: necesita
 -- que todas las tablas existan, así que vive en la última migración.
 --
 -- QUÉ CAMBIA RESPECTO AL DISEÑO ORIGINAL Y POR QUÉ
@@ -25,7 +25,10 @@
 --      tiene una puerta blindada con la llave puesta.
 --
 -- La combinación correcta es: rol dedicado sin privilegios de dueño +
--- FORCE RLS en todas las tablas + SET LOCAL por transacción.
+-- ENABLE ROW LEVEL SECURITY en todas las tablas + SET LOCAL por transacción.
+-- (Deliberadamente sin FORCE: ver la nota extensa en 0010_hardening.sql —
+-- FORCE rompe la vía de escape que los propios helpers SECURITY DEFINER
+-- necesitan para no recursionar contra sus propias policies.)
 --
 -- COMPATIBILIDAD CON EL TRANSACTION POOLER
 -- ---------------------------------------------------------------------------
@@ -59,8 +62,23 @@ create table public.users (
   deleted_at          timestamptz,
 
   constraint users_email_format check (email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
-  -- bcrypt siempre produce 60 caracteres con prefijo $2a/$2b/$2y.
-  constraint users_password_hash_format check (password_hash ~ '^\$2[aby]\$\d{2}\$.{53}$'),
+  -- Formato de passlib's bcrypt_sha256, no bcrypt puro ($2b$...).
+  --
+  -- app/core/security.py usa el esquema "bcrypt_sha256": bcrypt trunca en
+  -- silencio cualquier entrada más allá de 72 BYTES (no caracteres — una
+  -- contraseña con acentos u otros caracteres multibyte puede superar ese
+  -- límite bastante antes de los 72 caracteres visibles). Dos contraseñas
+  -- distintas que compartan ese prefijo producirían el mismo hash. passlib
+  -- resuelve esto prehasheando con SHA-256 antes de aplicar bcrypt, a costa
+  -- de envolver el resultado en su propio formato modular:
+  --
+  --   $bcrypt-sha256$v=2,t=2b,r=12$<salt de 22>$<hash de 31>
+  --
+  -- que es lo que valida este CHECK, no el prefijo $2a/$2b/$2y de bcrypt a
+  -- secas.
+  constraint users_password_hash_format check (
+    password_hash ~ '^\$bcrypt-sha256\$v=\d+,t=2[aby],r=\d{1,2}\$[A-Za-z0-9./]{22}\$[A-Za-z0-9./]{31}$'
+  ),
   constraint users_failed_login_count check (failed_login_count >= 0)
 );
 

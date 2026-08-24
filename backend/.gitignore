@@ -1,0 +1,22 @@
+# entorno virtual
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# entorno — .env SÍ se ignora aquí (a diferencia del frontend): contiene
+# DATABASE_URL y MIGRATION_URL con credenciales reales, no solo flags de build.
+.env
+.env.local
+
+# testing / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# tooling
+.mypy_cache/
+.ruff_cache/
+
+# sistema
+.DS_Store

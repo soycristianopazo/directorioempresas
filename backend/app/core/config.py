@@ -7,15 +7,24 @@ un mensaje claro, no en la primera petición con un error opaco.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Ruta absoluta, no ".env" relativo. pydantic-settings resuelve env_file contra
+# el directorio de trabajo del PROCESO, no contra la ubicación de este
+# archivo. Eso funciona cuando se arranca con `cd backend && uvicorn ...`,
+# pero se rompe con `uvicorn --app-dir backend` (que ajusta sys.path, no el
+# cwd) o con cualquier otro lanzador que invoque desde la raíz del repo —
+# exactamente el caso real que lo reveló.
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

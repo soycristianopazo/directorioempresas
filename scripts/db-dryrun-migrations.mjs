@@ -77,7 +77,9 @@ try {
         (select count(*) from pg_class c join pg_namespace n
            on n.oid=c.relnamespace
            where n.nspname='public' and c.relkind in ('r','p')
-             and not c.relispartition and not c.relforcerowsecurity)  as sin_force_rls,
+             -- ENABLE, no FORCE: FORCE rompe la recursión que evitan los
+             -- helpers SECURITY DEFINER — ver la nota en 0010_hardening.sql.
+             and not c.relispartition and not c.relrowsecurity)       as sin_rls,
         (select count(*) from pg_roles where rolname='app_user')      as rol_app_user
     `)
     console.log('\n' + JSON.stringify(rows[0], null, 2))

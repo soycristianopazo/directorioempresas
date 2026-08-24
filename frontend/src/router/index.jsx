@@ -1,9 +1,15 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { ProtectedRoute } from '@/router/ProtectedRoute';
+import { RequireOrg } from '@/router/RequireOrg';
+import { AppLayout } from '@/components/AppLayout';
 import HomePage from '@/pages/HomePage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
+import OnboardingPage from '@/pages/OnboardingPage';
 import DashboardPage from '@/pages/DashboardPage';
+import CompanyPage from '@/pages/CompanyPage';
+import TeamPage from '@/pages/TeamPage';
+import InvitationPage from '@/pages/InvitationPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 
 /**
@@ -21,7 +27,23 @@ export const router = createBrowserRouter([
   { path: '/register', element: <RegisterPage /> },
   {
     element: <ProtectedRoute />,
-    children: [{ path: '/dashboard', element: <DashboardPage /> }],
+    children: [
+      { path: '/onboarding', element: <OnboardingPage /> },
+      { path: '/invitaciones/:token', element: <InvitationPage /> },
+      {
+        element: <RequireOrg />,
+        children: [
+          {
+            element: <AppLayout />,
+            children: [
+              { path: '/dashboard', element: <DashboardPage /> },
+              { path: '/empresa', element: <CompanyPage /> },
+              { path: '/empresa/equipo', element: <TeamPage /> },
+            ],
+          },
+        ],
+      },
+    ],
   },
   { path: '*', element: <NotFoundPage /> },
 ]);

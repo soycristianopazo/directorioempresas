@@ -1,4 +1,4 @@
-"""Rol de aplicación, FORCE RLS, bypass de sistema y vistas
+"""Rol de aplicación, RLS, bypass de sistema y vistas
 
 Revision ID: 0010
 Revises: 0009
