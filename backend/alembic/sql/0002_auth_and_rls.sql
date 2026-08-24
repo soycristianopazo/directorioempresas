@@ -1,8 +1,10 @@
 -- ============================================================================
--- Fundación de autenticación y RLS para el stack FastAPI
+-- 0002 · Credenciales e identidad de la petición
 -- ----------------------------------------------------------------------------
--- Este archivo reemplaza a las migraciones 0002 y 0006 del stack anterior.
--- Se ejecuta desde una revisión de Alembic con op.execute().
+-- Reemplaza a auth.users de GoTrue y a auth.uid().
+--
+-- El endurecimiento (rol app_user, grants y FORCE RLS) NO va aquí: necesita
+-- que todas las tablas existan, así que vive en la última migración.
 --
 -- QUÉ CAMBIA RESPECTO AL DISEÑO ORIGINAL Y POR QUÉ
 -- ---------------------------------------------------------------------------
@@ -161,72 +163,6 @@ set search_path = ''
 as $$
   select coalesce(current_setting('app.system_context', true), 'off') = 'on';
 $$;
-
-
--- ============================================================================
--- Rol de aplicación
--- ----------------------------------------------------------------------------
--- El backend NO se conecta como `postgres`. Se conecta como `app_user`, que:
---   · no es dueño de ninguna tabla  → está sujeto a RLS
---   · no tiene BYPASSRLS
---   · no puede hacer DDL            → una inyección no altera el esquema
---
--- Las migraciones sí corren como `postgres` (Alembic, conexión aparte en
--- modo sesión por el puerto 5432).
--- ============================================================================
-
-do $$
-begin
-  if not exists (select 1 from pg_roles where rolname = 'app_user') then
-    create role app_user nologin noinherit;
-  end if;
-end $$;
-
-grant usage on schema public to app_user;
-grant usage on schema app to app_user;
-
-grant select, insert, update, delete on all tables in schema public to app_user;
-grant usage, select on all sequences in schema public to app_user;
-grant execute on all functions in schema app to app_user;
-grant execute on all functions in schema public to app_user;
-
--- Que las tablas futuras hereden los mismos permisos sin acordarse de darlos.
-alter default privileges in schema public
-  grant select, insert, update, delete on tables to app_user;
-alter default privileges in schema public
-  grant usage, select on sequences to app_user;
-alter default privileges in schema app
-  grant execute on functions to app_user;
-
--- Excepciones: tablas que la aplicación nunca debe modificar.
-revoke insert, update, delete on public.audit_logs from app_user;
-revoke all on public.permissions from app_user;
-grant select on public.permissions to app_user;
-
-
--- ============================================================================
--- FORCE ROW LEVEL SECURITY
--- ----------------------------------------------------------------------------
--- Sin esto, cualquier conexión con el rol dueño omite las policies. Es la
--- línea que separa "RLS configurado" de "RLS aplicado".
--- ============================================================================
-
-do $$
-declare
-  r record;
-begin
-  for r in
-    select c.relname
-    from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public'
-      and c.relkind in ('r', 'p')
-      and not c.relispartition
-  loop
-    execute format('alter table public.%I enable row level security', r.relname);
-    execute format('alter table public.%I force row level security', r.relname);
-  end loop;
-end $$;
 
 
 -- ============================================================================
