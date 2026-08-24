@@ -16,6 +16,9 @@ import CompanyCoveragePage from '@/pages/CompanyCoveragePage';
 import CatalogPage from '@/pages/CatalogPage';
 import OfferingDetailPage from '@/pages/OfferingDetailPage';
 import CredentialsPage from '@/pages/CredentialsPage';
+import BuyerSearchPage from '@/pages/BuyerSearchPage';
+import ComparePage from '@/pages/ComparePage';
+import SupplierListsPage from '@/pages/SupplierListsPage';
 import TeamPage from '@/pages/TeamPage';
 import InvitationPage from '@/pages/InvitationPage';
 import AdminTaxonomyPage from '@/pages/admin/AdminTaxonomyPage';
@@ -54,6 +57,9 @@ export const router = createBrowserRouter([
               { path: '/empresa/catalogo/:offeringId', element: <OfferingDetailPage /> },
               { path: '/empresa/credenciales', element: <CredentialsPage /> },
               { path: '/empresa/equipo', element: <TeamPage /> },
+              { path: '/buscar', element: <BuyerSearchPage /> },
+              { path: '/comparar', element: <ComparePage /> },
+              { path: '/empresa/listas', element: <SupplierListsPage /> },
             ],
           },
         ],

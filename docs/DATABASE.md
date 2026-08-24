@@ -46,6 +46,10 @@
 | `0027_completion_pct.sql` | `app.compute_completion_pct(organization_id)` — porcentaje de completitud del perfil |
 | `0028_fase3_rls_helpers.sql` | `app.can_view_organization(org)`, `app.can_view_offering(offering)` — helpers de visibilidad reutilizados por ~20 policies |
 | `0029_fase3_rls_policies.sql` | RLS de todas las tablas de 0020-0026 |
+| `0030_search_index.sql` | `supplier_search_index` — read model desnormalizado de búsqueda (1 fila por oferta), refrescado desde Python, no por trigger |
+| `0031_supplier_lists.sql` | `supplier_lists`, `supplier_list_items` — listas de proveedores guardadas por un comprador |
+| `0032_analytics.sql` | `search_logs`, `search_impressions`, `profile_views`, `offering_views` — insert-only (salvo el agregado diario de impresiones), sin policy de usuario |
+| `0033_fase4_rls.sql` | RLS de las tablas de 0030-0032 |
 
 Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió contra la base real — se agrega una nueva. (Durante el desarrollo activo de una fase, mientras nada se ha compartido/aplicado en otro entorno, sí se corrige el archivo en el lugar y se reaplica — ver el historial de 0012 como ejemplo real de esto.)
 
@@ -127,6 +131,16 @@ Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió co
 
 **`app.compute_completion_pct(organization_id)`** — No es una tabla sino una función que resume cuánto del perfil está lleno; se invoca desde `services/completion.py::recompute_completion_pct()` tras cualquier mutación relevante (perfil, catálogo, credenciales) y escribe el resultado en `organizations.completion_pct`. Requiere un `flush()` explícito antes de leer vía SQL crudo en la misma transacción — `SessionLocal` corre con `autoflush=False` en todo el proyecto (`backend/app/db/session.py`), así que una mutación ORM pendiente no es visible todavía para una consulta `text()` en la misma sesión sin ese flush.
 
+### Búsqueda y descubrimiento público (fase 4)
+
+**`supplier_search_index`** — Read model desnormalizado, 1 fila por oferta: `search_vector tsvector` (FTS en español, `to_tsvector('spanish', extensions.unaccent(...))`, ponderado A=nombre/B=categoría+sinónimos+industria/C=descripción larga/D=nombre de la empresa), arrays `taxonomy_node_ids`/`industry_ids`/`admin_division_ids` para filtrado facetado (`&&`), `attributes jsonb` (proyección de `offering_attribute_values` filtrada a `is_filterable=true`), `is_public` precalculado (offering+organización ACTIVE y visibility=PUBLIC — exactamente lo que ve un visitante sin sesión) y `completion_pct` desnormalizado como proxy de calidad. **No se refresca por trigger**: `services/search.py::reindex_offering()` lo recalcula en la MISMA transacción que la mutación que lo dispara (llamado desde `services/offerings.py` en cada cambio de oferta/taxonomía/precio/atributos, y desde `services/organizations.py` cuando cambia `visibility`/`status`) — mismo criterio que `recompute_completion_pct`, incluido el `flush()` previo por el mismo motivo de `autoflush=False`. Sin columnas de `is_accredited`/`supplier_score`: esos son conceptos de fase 5/6 que todavía no existen: el orden por defecto es `ts_rank` + `completion_pct`. `backend/scripts/reindex_search.py` reconstruye el índice completo a mano — no hay scheduler/cron en este stack, es un script de reconciliación de uso manual.
+
+**`supplier_lists` / `supplier_list_items`** — Listas de proveedores guardadas por un comprador (favoritos). Reutiliza los permisos `vendor_list.read`/`vendor_list.manage`, ya sembrados en `0009` para esta fase exacta.
+
+**`search_logs` / `search_impressions` / `profile_views` / `offering_views`** — Analítica de búsqueda y visitas. Insert-only salvo `search_impressions` (agregado diario, incrementado por upsert) — `search_logs`/`profile_views`/`offering_views` tienen `REVOKE UPDATE, DELETE` para `app_user`, mismo criterio que `audit_logs`. Escritas siempre en `session_for_system()`: el visitante anónimo que dispara estos inserts no tiene permiso propio para escribir, el sistema registra en su nombre.
+
+Las páginas públicas indexables (`/discover`, `/proveedores/{slug}`, servidas por FastAPI+Jinja2 fuera de `/api` — ver `backend/app/api/public.py`) y la API JSON equivalente para la SPA de comprador (`/api/discover/*`) comparten exactamente la misma lógica de `services/search.py`; RLS decide qué es visible según quién pregunta (anónimo o autenticado), no hay chequeo de permiso adicional en Python para estas lecturas públicas.
+
 ### Observabilidad
 
 **`audit_logs`** — Inmutable: `REVOKE UPDATE, DELETE` para `app_user`.
@@ -152,7 +166,10 @@ los RPCs de antes:
 | `organization_profile.*` | Ubicaciones, contactos, media, industrias/territorios de la empresa |
 | `offerings.*` | CRUD del catálogo — `offering.write`/`offering.publish`/`offering.delete` distinguidos por acción específica, no solo por RLS |
 | `credentials.*` | Certificaciones, referencias de clientes, casos de éxito |
-| `completion.recompute_completion_pct` | Recalcula y persiste `organizations.completion_pct` tras cualquier mutación de perfil/catálogo/credenciales |
+| `completion.recompute_completion_pct` | Recalcula y persiste `organizations.completion_pct` tras cualquier mutación de perfil/catálogo/credenciales; además actualiza el `completion_pct` denormalizado en `supplier_search_index` |
+| `search.reindex_offering` / `reindex_org_offerings` | Recalcula `supplier_search_index`, llamado desde `offerings.py`/`organizations.py` tras cada mutación relevante |
+| `search.search_offerings` / `get_public_organization` | Búsqueda facetada y perfil público de organización — consumidos por `app/api/public.py` (Jinja2) y `/api/discover/*` (JSON, SPA) |
+| `supplier_lists.*` | CRUD de listas de proveedores guardadas (`vendor_list.read`/`vendor_list.manage`) |
 
 Todas ellas verifican el permiso ANTES de mutar (no dejan que RLS bloquee el
 `UPDATE`/`INSERT` y lo detecten por sus efectos) — ver el comentario en
@@ -180,6 +197,9 @@ cd backend && python seed.py
 
 # Crear los buckets de Supabase Storage (idempotente)
 node scripts/storage-setup-buckets.mjs
+
+# Reconstruir el índice de búsqueda completo (reconciliación manual, fase 4)
+cd backend && PYTHONPATH=. python scripts/reindex_search.py
 ```
 
 **Storage (fase 3):** dos buckets — `org-media` (público, 8 MB, imágenes) para
@@ -193,6 +213,19 @@ proyecto usa el formato nuevo `sb_secret_...` (token opaco, no JWT) — la
 Storage API exige **ambos** headers `Authorization: Bearer` y `apikey` con el
 mismo valor; falta uno y el error es el engañoso `"Invalid Compact JWS"`, que
 no apunta a la causa real.
+
+**Páginas públicas (fase 4):** `/discover`, `/proveedores/{slug}`,
+`/sitemap.xml`, `/robots.txt` — servidas por FastAPI+Jinja2
+(`backend/app/api/public.py`, `backend/app/templates/`), montadas fuera del
+prefijo `/api` directamente en `app` (`backend/app/main.py`), no en la SPA de
+React. HTML servido con contenido real en la respuesta inicial, sin JS
+necesario para funcionar (facetas como links con querystring). CSS propio,
+escrito a mano (`backend/app/static/css/public.css`) — sin un segundo build
+de Tailwind, con los mismos tokens de color que `frontend/src/styles/globals.css`
+copiados una vez (mantener en sync a mano si la paleta cambia). Las rutas
+usan `Path(__file__).resolve()...` para ubicar `templates/`/`static/`, no
+rutas relativas al CWD — el proceso puede arrancar desde la raíz del repo
+(`--app-dir backend`) o desde `backend/` según el entorno.
 
 No hay generación de tipos (`db:types`) ni suite pgTAP en este stack: los
 modelos SQLAlchemy en `backend/app/models/` son el equivalente tipado, y se

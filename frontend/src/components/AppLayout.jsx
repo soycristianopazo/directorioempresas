@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Award, Building2, LayoutDashboard, MapPinned, Package, Users } from 'lucide-react';
+import { Award, Building2, LayoutDashboard, List, MapPinned, Package, Search, Users } from 'lucide-react';
 import { OrganizationSwitcher } from '@/components/OrganizationSwitcher';
 import { UserMenu } from '@/components/UserMenu';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,8 @@ const NAV = [
   { to: '/empresa/cobertura', label: 'Cobertura', icon: MapPinned },
   { to: '/empresa/catalogo', label: 'Catálogo', icon: Package },
   { to: '/empresa/credenciales', label: 'Credenciales', icon: Award },
+  { to: '/buscar', label: 'Buscar', icon: Search },
+  { to: '/empresa/listas', label: 'Listas', icon: List },
   { to: '/empresa/equipo', label: 'Equipo', icon: Users },
 ];
 

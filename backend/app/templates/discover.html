@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}{% if q %}"{{ q }}" — {% endif %}Buscar proveedores · Directorio de Empresas{% endblock %}
+{% block meta_description %}Encuentra proveedores verificados por categoría, industria y cobertura territorial en Chile. {{ total }} resultados disponibles.{% endblock %}
+
+{% block content %}
+<section class="search-hero">
+  <div class="container">
+    <h1>Encuentra proveedores</h1>
+    <p>Filtra por categoría, industria y región para llegar directo a quien puede ayudarte.</p>
+    <form class="search-form" action="/discover" method="get">
+      <input type="text" name="q" placeholder="Ej. transporte de personal, EPP, mantención eléctrica" value="{{ q or '' }}" />
+      {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
+      {% if industry %}<input type="hidden" name="industry" value="{{ industry }}" />{% endif %}
+      {% if region %}<input type="hidden" name="region" value="{{ region }}" />{% endif %}
+      <button type="submit" class="btn btn-primary">Buscar</button>
+    </form>
+  </div>
+</section>
+
+<div class="container discover-layout">
+  <aside>
+    {% if active_filters %}
+    <div class="active-filters">
+      {% for f in active_filters %}
+      <a class="chip" href="{{ f.remove_url }}">{{ f.label }} ✕</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="facet-group">
+      <h3>Categoría</h3>
+      <ul class="facet-list">
+        {% for f in facets.taxonomy_nodes %}
+        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
+        {% endfor %}
+        {% if not facets.taxonomy_nodes %}<li><span class="count">Sin resultados para facetar.</span></li>{% endif %}
+      </ul>
+    </div>
+
+    <div class="facet-group">
+      <h3>Industria</h3>
+      <ul class="facet-list">
+        {% for f in facets.industries %}
+        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="facet-group">
+      <h3>Región</h3>
+      <ul class="facet-list">
+        {% for f in facets.admin_divisions %}
+        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </aside>
+
+  <div>
+    <p class="results-count">{{ total }} resultado{{ 's' if total != 1 }}</p>
+
+    {% for r in results %}
+    <a class="result-card" href="/proveedores/{{ r.organization_slug }}">
+      <p class="offering-name">{{ r.offering_name }}</p>
+      <p class="org-name">{{ r.trade_name or r.legal_name }}</p>
+      {% if r.short_description %}<p class="description">{{ r.short_description }}</p>{% endif %}
+      <div class="result-meta">
+        <span class="badge">{{ offering_type_labels.get(r.offering_type, r.offering_type) }}</span>
+        <span class="badge">{{ availability_labels.get(r.availability_status, r.availability_status) }}</span>
+        {% if r.pricing_is_public and r.price_type and r.price_type != 'ON_REQUEST' %}
+        <span class="badge">
+          {% if r.price_type == 'FROM' %}Desde {{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
+          {% if r.price_type == 'FIXED' %}{{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
+          {% if r.price_type == 'RANGE' %}{{ r.amount_min | money }}–{{ r.amount_max | money }} {{ r.currency_code or '' }}{% endif %}
+        </span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+
+    {% if not results %}
+    <div class="empty-state">
+      <p>No encontramos resultados con estos filtros. Prueba con otra categoría o quita algunos filtros.</p>
+    </div>
+    {% endif %}
+
+    {% if total > page_size %}
+    <div class="pagination">
+      {% if page > 1 %}<a class="btn btn-outline" href="{{ prev_url }}">← Anterior</a>{% endif %}
+      {% if page * page_size < total %}<a class="btn btn-outline" href="{{ next_url }}">Siguiente →</a>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -19,6 +19,7 @@ from app.models.user import Profile
 from app.repositories import members as members_repo
 from app.repositories import organization_profile as profile_repo
 from app.repositories import organizations as orgs_repo
+from app.services import search as search_service
 
 
 class OrganizationError(Exception):
@@ -105,6 +106,8 @@ async def update_organization(
         org = await orgs_repo.update_fields(db, organization_id, **fields)
         if org is None:
             raise OrganizationError("Organización no encontrada")
+        if "visibility" in fields:
+            await search_service.reindex_org_offerings(db, organization_id)
 
 
 async def publish_organization(*, user_id: UUID, organization_id: UUID) -> None:
@@ -136,6 +139,7 @@ async def publish_organization(*, user_id: UUID, organization_id: UUID) -> None:
             )
 
         org.status = "ACTIVE"
+        await search_service.reindex_org_offerings(db, organization_id)
 
 
 async def switch_organization(*, user_id: UUID, organization_id: UUID) -> None:

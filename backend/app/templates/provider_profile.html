@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}{{ org.trade_name or org.legal_name }} · Directorio de Empresas{% endblock %}
+{% block meta_description %}{{ org.short_description or (org.trade_name or org.legal_name) + ' — perfil de proveedor verificado en Directorio de Empresas.' }}{% endblock %}
+{% block og_image %}{% if logo_url %}<meta property="og:image" content="{{ logo_url }}" />{% endif %}{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ (org.trade_name or org.legal_name) | tojson }},
+  "url": {{ request.url | string | tojson }}
+  {% if logo_url %}, "logo": {{ logo_url | tojson }}{% endif %}
+  {% if org.website_url %}, "sameAs": [{{ org.website_url | tojson }}]{% endif %}
+  {% if org.short_description %}, "description": {{ org.short_description | tojson }}{% endif %}
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="profile-header">
+    {% if logo_url %}<img class="profile-logo" src="{{ logo_url }}" alt="Logo de {{ org.trade_name or org.legal_name }}" />{% endif %}
+    <div>
+      <h1>{{ org.trade_name or org.legal_name }}</h1>
+      {% if org.short_description %}<p class="tagline">{{ org.short_description }}</p>{% endif %}
+      <div class="result-meta">
+        {% for i in industries %}<span class="badge">{{ i }}</span>{% endfor %}
+        {% if org.website_url %}<a class="badge" href="{{ org.website_url }}" target="_blank" rel="noopener">Sitio web</a>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if org.description %}
+  <section class="profile-section">
+    <h2>Sobre la empresa</h2>
+    <p>{{ org.description }}</p>
+  </section>
+  {% endif %}
+
+  {% if territories %}
+  <section class="profile-section">
+    <h2>Cobertura territorial</h2>
+    <div class="result-meta">
+      {% for t in territories %}<span class="badge">{{ t }}</span>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if offerings %}
+  <section class="profile-section">
+    <h2>Catálogo ({{ offerings | length }})</h2>
+    <div class="offering-grid">
+      {% for item in offerings %}
+      <div class="offering-card">
+        {% if item.media %}<img src="{{ item.media[0].url }}" alt="{{ item.offering.name }}" />{% endif %}
+        <div class="body">
+          <h3>{{ item.offering.name }}</h3>
+          {% if item.offering.short_description %}<p>{{ item.offering.short_description }}</p>{% endif %}
+          {% if item.pricing and item.pricing.price_type and item.pricing.price_type != 'ON_REQUEST' %}
+          <p class="badge" style="margin-top:0.5rem;">
+            {% if item.pricing.price_type == 'FROM' %}Desde {{ item.pricing.amount_min | money }} {{ item.pricing.currency_code or '' }}{% endif %}
+            {% if item.pricing.price_type == 'FIXED' %}{{ item.pricing.amount_min | money }} {{ item.pricing.currency_code or '' }}{% endif %}
+          </p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if certifications %}
+  <section class="profile-section">
+    <h2>Certificaciones</h2>
+    <div class="result-meta">
+      {% for c in certifications %}<span class="badge">{{ c }}</span>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if case_studies %}
+  <section class="profile-section">
+    <h2>Casos de éxito</h2>
+    <ul class="case-study-list">
+      {% for cs in case_studies %}
+      <li>
+        <strong>{{ cs.name }}</strong>
+        {% if cs.description %}<p>{{ cs.description }}</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if public_contacts %}
+  <section class="profile-section">
+    <h2>Contacto</h2>
+    <ul class="contact-list">
+      {% for c in public_contacts %}
+      <li>
+        <strong>{{ c.full_name }}</strong>{% if c.job_title %} — {{ c.job_title }}{% endif %}<br />
+        {% if c.email %}<span class="badge">{{ c.email }}</span>{% endif %}
+        {% if c.phone %}<span class="badge">{{ c.phone }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -42,6 +42,8 @@
 | `app.can_view_organization(org)` | `0028` | `boolean` | Pública si `ACTIVE`+visible, o miembro, o admin de plataforma — centraliza la lógica de visibilidad reutilizada por ~15 policies de perfil extendido |
 | `app.can_view_offering(offering)` | `0028` | `boolean` | Igual que arriba pero a nivel de oferta individual, resolviendo su organización dueña |
 
+Los helpers de arriba resuelven visibilidad para RLS. `supplier_search_index` va un paso más allá: en vez de invocar `can_view_offering()` en cada SELECT (una función `SECURITY DEFINER` con varios JOINs, cara de correr por cada fila de una búsqueda con miles de resultados), precalcula el resultado equivalente para un visitante SIN sesión en la propia columna `is_public` al reindexar — la policy de SELECT queda `using (is_public)`, una comparación de booleano plano. Es la única tabla del proyecto que cambia "función en la policy" por "columna precalculada" — deliberado, por volumen (una búsqueda facetada es exactamente el caso que no debe pagar el costo de una función por fila).
+
 El schema `app` no se expone directamente a ningún cliente: el backend conecta como `app_user`, que tiene `USAGE` sobre `app` pero el frontend nunca ve SQL — todo pasa por las rutas de FastAPI.
 
 ---
@@ -72,6 +74,9 @@ El schema `app` no se expone directamente a ningún cliente: el backend conecta 
 | `supplier_offerings` y relacionadas (`taxonomy_nodes`, `industries`, `territories`, `pricing`, `media`, `documents`, `attribute_values`) | Según `can_view_offering` (solo ofertas `ACTIVE` de orgs visibles) | Lectura si es miembro de la org dueña | `offering.read`/`write`/`publish`/`delete` según la acción — ver nota abajo | Total |
 | `certification_types` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura (catálogo cerrado, mismo criterio que taxonomía) |
 | `organization_certifications` / `client_references` / `case_studies` y relacionadas | Según `can_view_organization` (y `is_public` en la fila) | Lectura si es miembro | `organization.update` → escritura | Total |
+| `supplier_search_index` | Según `is_public` (precalculado en la propia fila) | Igual que anon — el read model no distingue miembro, esa vista ya la da `/api/organizations/{id}/offerings` | `offering.write`/`publish`/`delete`/`organization.update` → escritura (reindexado, misma transacción que la mutación que lo dispara) | Total |
+| `supplier_lists` / `supplier_list_items` | ✗ (nunca público, ni siquiera vía `can_view_organization`) | `vendor_list.read` (equipo comprador) | `vendor_list.manage` → escritura | Total |
+| `search_logs` / `search_impressions` / `profile_views` / `offering_views` | ✗ | ✗ | ✗ | Solo contexto de sistema — sin policy de usuario, mismo criterio que `domain_events` |
 
 **Nota sobre `supplier_offerings`:** RLS acepta cualquiera de `offering.read`/`write`/`publish`/`delete` como base para tocar la fila — es un backstop grueso. La distinción fina de CUÁL permiso hace falta para CADA mutación específica (crear/editar borrador → `write`; DRAFT→ACTIVE → `publish`, con su propia validación de completitud; borrado lógico → `delete`) vive en `services/offerings.py`, no en la policy — mismo patrón que el resto del proyecto: RLS es la defensa 1, el servicio decide el detalle.
 
@@ -94,6 +99,10 @@ Las tablas de referencia/taxonomía (fase 2) son deliberadamente públicas por d
 **Ninguna tabla usa `FORCE ROW LEVEL SECURITY`.** `ENABLE` alcanza porque `app_user` nunca es dueño de una tabla (las crea `postgres` vía Alembic). `FORCE` rompería la vía de escape que los helpers `SECURITY DEFINER` necesitan para no recursionar contra sus propias policies — probado y reproducido una vez (`StatementTooComplexError: stack depth limit exceeded`), documentado en detalle en `0010_hardening.sql`. No reintroducir esto "por seguridad extra": es exactamente el bug ya resuelto.
 
 **Los datos de referencia/taxonomía son de lectura pública por diseño**, con escritura acotada a `platform.manage_taxonomy`, verificado en dos capas: RLS (`app.has_platform_permission()`) y el servicio Python (mismo chequeo, antes de mutar, para evitar que RLS bloquee un `UPDATE` ya en curso).
+
+**`supplier_search_index` se escribe con el permiso del usuario, no en contexto de sistema.** A diferencia del resto de las tablas de solo-sistema de esta fase, el reindexado (`services/search.py::reindex_offering`) corre dentro de la MISMA transacción `session_for_user()` que la mutación que lo dispara (publicar una oferta, cambiar precio, etc.) — mismo patrón que `recompute_completion_pct`. Por eso la policy de escritura acepta `offering.write`/`publish`/`delete`/`organization.update` (el mismo permiso que ya validó la mutación), no `is_system_context()`. Usar contexto de sistema aquí habría abierto una conexión NUEVA y separada, que no vería los cambios todavía sin comittear de la transacción que la disparó — el reindexado quedaría un paso atrás.
+
+**`search_logs` / `profile_views` / `offering_views` son inmutables de verdad**, mismo criterio que `audit_logs`: `REVOKE UPDATE, DELETE` para `app_user`. `search_impressions` es la única excepción intencional — es un agregado diario incrementado por `upsert`, necesita `UPDATE`.
 
 **Supabase Storage no tiene RLS de Postgres propio en este diseño — el control de acceso vive en el backend.** El `service_role` de Storage solo lo tiene el backend (nunca el cliente); las fotos de un perfil se sirven por URL pública del bucket `org-media`, y los documentos técnicos por URL firmada de corta duración (`org-documents`, 1 hora) generada por `services/offerings.py` **después** de que el mismo chequeo de `can_view_offering()`/permiso ya pasó a nivel de API. Es el mismo principio que el resto del proyecto — RLS/permiso primero, el recurso después — aplicado a un sistema que no tiene su propio RLS.
 

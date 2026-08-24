@@ -14,6 +14,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories import search as search_repo
+
 
 async def recompute_completion_pct(session: AsyncSession, organization_id: UUID) -> int:
     # SessionLocal se configura con autoflush=False (app/db/session.py) — a
@@ -34,4 +36,10 @@ async def recompute_completion_pct(session: AsyncSession, organization_id: UUID)
         ),
         {"org_id": str(organization_id)},
     )
-    return int(result.scalar_one())
+    completion_pct = int(result.scalar_one())
+    # Solo actualiza el número de ranking en el read model de búsqueda — no
+    # dispara un reindexado completo, ver repositories/search.py.
+    await search_repo.update_completion_pct_for_org(
+        session, organization_id, completion_pct
+    )
+    return completion_pct

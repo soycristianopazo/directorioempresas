@@ -32,6 +32,7 @@ from app.db.rls import session_for_user
 from app.models.attribute import AttributeDefinition
 from app.models.offering import OfferingPricing
 from app.repositories import offerings as offerings_repo
+from app.services import search as search_service
 from app.services.completion import recompute_completion_pct
 
 PERM_READ = "offering.read"
@@ -142,6 +143,7 @@ async def create_offering(
             **extra,
         )
         offering_id = offering.id
+        await search_service.reindex_offering(db, offering_id)
     return offering_id
 
 
@@ -152,6 +154,7 @@ async def update_offering(
         await _require(db, organization_id, PERM_WRITE)
         offering = await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.update_offering(offering, **fields)
+        await search_service.reindex_offering(db, offering_id)
 
 
 async def publish_offering(
@@ -174,6 +177,7 @@ async def publish_offering(
 
         await offerings_repo.publish_offering(offering)
         await recompute_completion_pct(db, organization_id)
+        await search_service.reindex_offering(db, offering_id)
 
 
 async def set_status(
@@ -185,6 +189,7 @@ async def set_status(
         await _require(db, organization_id, PERM_WRITE)
         offering = await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.update_offering(offering, status=status)
+        await search_service.reindex_offering(db, offering_id)
 
 
 async def delete_offering(
@@ -195,6 +200,7 @@ async def delete_offering(
         offering = await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.soft_delete_offering(offering)
         await recompute_completion_pct(db, organization_id)
+        await search_service.reindex_offering(db, offering_id)
 
 
 # ─── Taxonomía / industrias / territorio ─────────────────────────────────────
@@ -234,6 +240,7 @@ async def set_taxonomy_nodes(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.set_taxonomy_nodes(db, offering_id, nodes)
+        await search_service.reindex_offering(db, offering_id)
 
 
 async def set_industries(
@@ -243,6 +250,7 @@ async def set_industries(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.set_industries(db, offering_id, industry_ids)
+        await search_service.reindex_offering(db, offering_id)
 
 
 async def add_territory(
@@ -263,6 +271,7 @@ async def add_territory(
             coverage_type=coverage_type,
         )
         territory_id = territory.id
+        await search_service.reindex_offering(db, offering_id)
     return territory_id
 
 
@@ -277,6 +286,7 @@ async def remove_territory(
         )
         if not removed:
             raise OfferingNotFoundError("Territorio no encontrado")
+        await search_service.reindex_offering(db, offering_id)
 
 
 # ─── Precio ──────────────────────────────────────────────────────────────────
@@ -298,6 +308,7 @@ async def set_pricing(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.upsert_pricing(db, offering_id, **fields)
+        await search_service.reindex_offering(db, offering_id)
 
 
 # ─── Media / documentos ──────────────────────────────────────────────────────
@@ -528,6 +539,7 @@ async def set_attribute_value(
                 attribute_definition_id=attribute_definition_id,
             )
             await offerings_repo.set_multiselect_options(db, row.id, option_ids)
+            await search_service.reindex_offering(db, offering_id)
             return row.id
 
         slots = slots_by_type.get(definition.data_type)
@@ -546,4 +558,5 @@ async def set_attribute_value(
             attribute_definition_id=attribute_definition_id,
             **slots,
         )
+        await search_service.reindex_offering(db, offering_id)
         return row.id

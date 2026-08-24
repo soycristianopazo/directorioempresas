@@ -112,8 +112,8 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <NextStep label="Invitar a tu equipo" to="/empresa/equipo" />
-              <NextStep label="Buscar proveedores" phase="Próxima fase" />
-              <NextStep label="Crear tu lista de proveedores" phase="Próxima fase" />
+              <NextStep label="Buscar proveedores" to="/buscar" />
+              <NextStep label="Crear tu lista de proveedores" to="/empresa/listas" />
             </CardContent>
           </Card>
         )}

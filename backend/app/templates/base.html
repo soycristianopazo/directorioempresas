@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es-CL">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Directorio de Empresas{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}Encuentra proveedores verificados por rubro, industria y territorio en Chile.{% endblock %}" />
+  <link rel="canonical" href="{% block canonical %}{{ request.url }}{% endblock %}" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Directorio de Empresas" />
+  <meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}" />
+  <meta property="og:description" content="{% block og_description %}{{ self.meta_description() }}{% endblock %}" />
+  {% block og_image %}{% endblock %}
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/public.css" />
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="/discover">Directorio de Empresas</a>
+      <nav class="site-nav">
+        <a href="/discover">Buscar proveedores</a>
+        <a href="/login">Iniciar sesión</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      &copy; {{ current_year }} Directorio de Empresas — Chile
+    </div>
+  </footer>
+
+  {% block json_ld %}{% endblock %}
+</body>
+</html>

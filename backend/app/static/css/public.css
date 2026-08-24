@@ -1,0 +1,402 @@
+/* Hoja de estilos de las páginas públicas (Jinja2): /discover,
+   /proveedores/{slug}. Mano-escrita a propósito, sin build de Tailwind
+   separado — ver la nota de diseño del plan de fase 4. Los tokens de color
+   son una copia puntual de frontend/src/styles/globals.css (paleta
+   brand-*, porque estas SON páginas de marketing/descubrimiento público,
+   no pantallas de trabajo) — mantener en sync a mano si la paleta cambia. */
+
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(170 25% 12%);
+  --muted-foreground: hsl(170 8% 45%);
+  --secondary: hsl(160 14% 96%);
+  --border: hsl(160 13% 90%);
+  --radius: 0.75rem;
+
+  --brand-teal: hsl(169 68% 35%);
+  --brand-teal-dark: hsl(170 72% 20%);
+  --brand-teal-light: hsl(168 55% 46%);
+  --brand-lime: hsl(65 68% 54%);
+  --brand-olive: hsl(74 66% 33%);
+  --brand-sky: hsl(199 58% 87%);
+
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────── */
+
+.site-header {
+  border-bottom: 1px solid var(--border);
+  padding: 1rem 0;
+}
+
+.site-header .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.site-logo {
+  font-weight: 800;
+  font-size: 1.125rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  color: var(--foreground);
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.site-nav a {
+  text-decoration: none;
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+}
+
+.site-nav a:hover {
+  color: var(--foreground);
+}
+
+/* ─── Botones ───────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: var(--radius);
+  padding: 0.6rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--brand-teal);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--brand-teal-dark);
+}
+
+.btn-outline {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.btn-outline:hover {
+  background: var(--secondary);
+}
+
+/* ─── Hero de búsqueda ──────────────────────────────────────────────────── */
+
+.search-hero {
+  background: linear-gradient(180deg, var(--brand-sky) 0%, var(--background) 100%);
+  padding: 3rem 0 2rem;
+}
+
+.search-hero h1 {
+  font-size: 1.75rem;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.01em;
+}
+
+.search-hero p {
+  color: var(--muted-foreground);
+  margin: 0 0 1.5rem;
+  max-width: 40rem;
+}
+
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 40rem;
+}
+
+.search-form input[type='text'] {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  font-family: var(--font-sans);
+}
+
+/* ─── Layout de resultados ──────────────────────────────────────────────── */
+
+.discover-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 2rem;
+  padding: 2rem 0 4rem;
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .discover-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.facet-group {
+  margin-bottom: 1.5rem;
+}
+
+.facet-group h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  margin: 0 0 0.6rem;
+}
+
+.facet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.facet-list a {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-decoration: none;
+  font-size: 0.875rem;
+  color: var(--foreground);
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+}
+
+.facet-list a:hover {
+  background: var(--secondary);
+}
+
+.facet-list a.active {
+  background: var(--brand-teal);
+  color: white;
+}
+
+.facet-list .count {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.facet-list a.active .count {
+  color: white;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--secondary);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  text-decoration: none;
+  color: var(--foreground);
+}
+
+.results-count {
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+/* ─── Tarjeta de resultado ──────────────────────────────────────────────── */
+
+.result-card {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+  text-decoration: none;
+  color: var(--foreground);
+  transition: border-color 0.15s;
+}
+
+.result-card:hover {
+  border-color: var(--brand-teal);
+}
+
+.result-card .offering-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+}
+
+.result-card .org-name {
+  color: var(--brand-teal-dark);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.result-card .description {
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  margin: 0 0 0.6rem;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.badge {
+  display: inline-block;
+  background: var(--secondary);
+  border-radius: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.empty-state {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.pagination {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+/* ─── Perfil de proveedor ───────────────────────────────────────────────── */
+
+.profile-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  padding: 2.5rem 0 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-logo {
+  width: 88px;
+  height: 88px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  object-fit: contain;
+  padding: 0.5rem;
+  background: white;
+  flex-shrink: 0;
+}
+
+.profile-header h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+}
+
+.profile-header .tagline {
+  color: var(--muted-foreground);
+  margin: 0 0 0.75rem;
+  max-width: 42rem;
+}
+
+.profile-section {
+  padding: 2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-section h2 {
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+}
+
+.offering-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.offering-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.offering-card img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  background: var(--secondary);
+}
+
+.offering-card .body {
+  padding: 0.9rem;
+}
+
+.offering-card h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.3rem;
+}
+
+.offering-card p {
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.contact-list,
+.case-study-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.site-footer {
+  padding: 2rem 0;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  text-align: center;
+}
