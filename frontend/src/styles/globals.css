@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Sistema visual B2B: corporativo, denso en información, baja carga cognitiva.
+  Tokens en HSL sin la función hsl() envuelta, porque así los espera Tailwind
+  cuando se referencian como `hsl(var(--token))` (convención shadcn/ui).
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 20% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 12%;
+
+    --primary: 253 65% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 20% 12%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 96%;
+    --accent-foreground: 222 20% 12%;
+
+    --destructive: 4 78% 52%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 253 65% 45%;
+
+    --radius: 0.75rem;
+
+    --font-sans:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      sans-serif;
+  }
+
+  .dark {
+    --background: 222 24% 8%;
+    --foreground: 220 14% 92%;
+
+    --card: 222 22% 11%;
+    --card-foreground: 220 14% 92%;
+
+    --popover: 222 22% 11%;
+    --popover-foreground: 220 14% 92%;
+
+    --primary: 253 70% 62%;
+    --primary-foreground: 222 24% 8%;
+
+    --secondary: 222 18% 16%;
+    --secondary-foreground: 220 14% 92%;
+
+    --muted: 222 18% 16%;
+    --muted-foreground: 220 9% 65%;
+
+    --accent: 222 18% 16%;
+    --accent-foreground: 220 14% 92%;
+
+    --destructive: 4 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 222 18% 18%;
+    --input: 222 18% 18%;
+    --ring: 253 70% 62%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  /* Foco visible en todo elemento interactivo: accesibilidad básica. */
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+}

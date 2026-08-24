@@ -1,0 +1,5 @@
+# La SPA no debe indexarse: es la app autenticada.
+# Las páginas públicas indexables (/proveedores/[slug], /discover) las sirve
+# el backend con su propio robots.txt.
+User-agent: *
+Disallow: /

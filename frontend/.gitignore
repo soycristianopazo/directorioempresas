@@ -1,0 +1,25 @@
+# dependencias
+/node_modules
+
+# build
+/build
+
+# entorno — .env SÍ se commitea (solo flags de build, no secretos; ver .env).
+# Lo que varía por entorno o máquina va en .env.local, que es lo que se ignora.
+.env.local
+.env*.local
+
+# yarn
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+yarn-error.log*
+
+# sistema
+.DS_Store
+
+# cobertura de tests
+/coverage
