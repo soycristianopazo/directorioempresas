@@ -53,6 +53,9 @@ class SupplierSearchIndex(Base):
     is_public: Mapped[bool] = mapped_column(
         nullable=False, server_default=text("false")
     )
+    is_matchable: Mapped[bool] = mapped_column(
+        nullable=False, server_default=text("false")
+    )
     completion_pct: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0")
     )

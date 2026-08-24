@@ -18,6 +18,10 @@ import OfferingDetailPage from '@/pages/OfferingDetailPage';
 import CredentialsPage from '@/pages/CredentialsPage';
 import DocumentsPage from '@/pages/DocumentsPage';
 import AccreditationPage from '@/pages/AccreditationPage';
+import RequirementsPage from '@/pages/RequirementsPage';
+import SourcingEventsPage from '@/pages/SourcingEventsPage';
+import SourcingEventDetailPage from '@/pages/SourcingEventDetailPage';
+import MatchResultsPage from '@/pages/MatchResultsPage';
 import BuyerSearchPage from '@/pages/BuyerSearchPage';
 import ComparePage from '@/pages/ComparePage';
 import SupplierListsPage from '@/pages/SupplierListsPage';
@@ -61,6 +65,13 @@ export const router = createBrowserRouter([
               { path: '/empresa/credenciales', element: <CredentialsPage /> },
               { path: '/empresa/documentos', element: <DocumentsPage /> },
               { path: '/empresa/acreditacion', element: <AccreditationPage /> },
+              { path: '/empresa/necesidades', element: <RequirementsPage /> },
+              { path: '/empresa/sourcing', element: <SourcingEventsPage /> },
+              { path: '/empresa/sourcing/:eventId', element: <SourcingEventDetailPage /> },
+              {
+                path: '/empresa/sourcing/:eventId/resultados',
+                element: <MatchResultsPage />,
+              },
               { path: '/empresa/equipo', element: <TeamPage /> },
               { path: '/buscar', element: <BuyerSearchPage /> },
               { path: '/comparar', element: <ComparePage /> },

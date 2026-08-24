@@ -55,6 +55,11 @@
 | `0036_accreditation_enrollments.sql` | `accreditation_enrollments`, `accreditation_fulfillments`, `accreditation_section_progress`, `accreditation_status_history` (append-only), `accreditation_review_events` (append-only) |
 | `0037_badges.sql` | `badge_definitions` (`rule_expression jsonb`, seed de 3 badges automáticos) + `organization_badges` |
 | `0038_fase5_rls.sql` | RLS de las tablas de 0034-0037 |
+| `0039_requirements.sql` | `requirements` (la necesidad, §18), `requirement_items`, `requirement_locations`, `requirement_documents` — nunca públicas, privadas de la organización compradora |
+| `0040_sourcing_events.sql` | `sourcing_events` (incl. `matching_weights jsonb`, override por evento de los pesos de scoring), `sourcing_event_lots`, `sourcing_event_items`, `sourcing_event_stages`, `sourcing_event_documents`, `sourcing_event_criteria` (MUST_HAVE/NICE_TO_HAVE, 7 tipos con FK real por tipo + CHECK de coherencia, mismo criterio que `accreditation_requirements`) |
+| `0041_matching_results.sql` | `match_runs`, `match_results` — append-only (`REVOKE UPDATE, DELETE`), reproducibilidad vía `engine_version` + `weights_snapshot` |
+| `0042_search_index_matchable.sql` | `supplier_search_index` gana `is_matchable` (visibilidad graduada PUBLIC/REGISTERED/BUYERS_ONLY para cualquier comprador autenticado — superconjunto de `is_public`, que solo cubre PUBLIC para `anon`) |
+| `0043_fase6_rls.sql` | RLS de 0039-0042. Nada de esto es público, ni parcialmente — nunca hay un `select using (true)` ni `can_view_organization(...)` en este archivo |
 
 Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió contra la base real — se agrega una nueva. (Durante el desarrollo activo de una fase, mientras nada se ha compartido/aplicado en otro entorno, sí se corrige el archivo en el lugar y se reaplica — ver el historial de 0012 como ejemplo real de esto.)
 
@@ -180,6 +185,8 @@ los RPCs de antes:
 | `accreditation.review_fulfillment` / `decide_enrollment` | Lado revisor (`platform.review_accreditation`, vía `app.has_platform_permission()` — NO `app.has_permission()`, porque un revisor de plataforma no pertenece a la organización postulante) |
 | `accreditation._recompute_completion` | Fórmula de completitud (§F.4): `Σ(requirement.weight × fulfillment_factor) / Σ requirement.weight`, global y por sección, recalculada en la misma transacción tras cada mutación relevante — mismo patrón que `completion.recompute_completion_pct`. La vigencia (`expires_at >= current_date`) se evalúa en la propia consulta, no depende de un job — sin fase 5.8 (job diario), un ítem `APPROVED` pero vencido pierde su crédito de completitud al leer, aunque su `status` guardado no cambie hasta que algo lo toque |
 | `badges.evaluate_badges_for_org` | Evaluador determinístico de `badge_definitions.rule_expression` (`{"all": [{"fact", "op", "value"}]}`) — nunca reglas hardcodeadas en Python; llamado desde `accreditation.decide_enrollment` en la misma transacción |
+| `requirements.*` / `sourcing.*` | CRUD de la necesidad y del proceso de sourcing (`requirement.read`/`write`, `sourcing_event.read`/`create`/`publish`/`cancel`) |
+| `matching.run_matching` | El motor (§H, docs/03-MATCHING-ENGINE.md): Etapas 1-2 (recall + elegibilidad) en SQL vía `repositories/matching.py` — trabajo de conjuntos sobre hasta ~500 candidatos; Etapas 3-4 (scoring + ranking) en Python puro (`compute_category_fit`, `compute_capacity_fit`, etc. — sin DB, testeadas en `tests/test_matching_scoring.py`), sobre el conjunto ya filtrado. `dry_run=True` reusa el recall/elegibilidad ya calculado y solo re-corre scoring con pesos distintos, sin persistir — el preview de §H.7 sin pagar el costo de Etapa 1-2 en cada ajuste de slider |
 
 Todas ellas verifican el permiso ANTES de mutar (no dejan que RLS bloquee el
 `UPDATE`/`INSERT` y lo detecten por sus efectos) — ver el comentario en

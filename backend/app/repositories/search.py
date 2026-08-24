@@ -105,7 +105,7 @@ _REINDEX_OFFERING_SQL = text(
     insert into public.supplier_search_index (
       offering_id, organization_id, search_vector,
       taxonomy_node_ids, industry_ids, admin_division_ids, attributes,
-      offering_type, availability_status, price_type, is_public,
+      offering_type, availability_status, price_type, is_public, is_matchable,
       completion_pct, updated_at
     )
     select
@@ -145,6 +145,11 @@ _REINDEX_OFFERING_SQL = text(
         and agg.offering_visibility = 'PUBLIC'
         and agg.org_status = 'ACTIVE' and agg.org_visibility = 'PUBLIC'
       ),
+      (
+        agg.offering_status = 'ACTIVE' and agg.offering_deleted_at is null
+        and agg.offering_visibility in ('PUBLIC', 'REGISTERED', 'BUYERS_ONLY')
+        and agg.org_status = 'ACTIVE' and agg.org_visibility in ('PUBLIC', 'REGISTERED', 'BUYERS_ONLY')
+      ),
       agg.completion_pct,
       now()
     from agg
@@ -163,6 +168,7 @@ _REINDEX_OFFERING_SQL = text(
       availability_status = excluded.availability_status,
       price_type = excluded.price_type,
       is_public = excluded.is_public,
+      is_matchable = excluded.is_matchable,
       completion_pct = excluded.completion_pct,
       updated_at = excluded.updated_at
     """

@@ -2,6 +2,8 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   Award,
   Building2,
+  ClipboardList,
+  FileSearch,
   FileText,
   LayoutDashboard,
   List,
@@ -25,6 +27,8 @@ const NAV = [
   { to: '/empresa/acreditacion', label: 'Acreditación', icon: ShieldCheck },
   { to: '/buscar', label: 'Buscar', icon: Search },
   { to: '/empresa/listas', label: 'Listas', icon: List },
+  { to: '/empresa/necesidades', label: 'Necesidades', icon: ClipboardList },
+  { to: '/empresa/sourcing', label: 'Sourcing', icon: FileSearch },
   { to: '/empresa/equipo', label: 'Equipo', icon: Users },
 ];
 

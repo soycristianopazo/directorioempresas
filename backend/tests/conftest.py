@@ -21,6 +21,7 @@ from app.db.rls import session_for_system
 from app.repositories import accreditation as accreditation_repo
 from app.repositories import members as members_repo
 from app.services import auth as auth_service
+from app.services import offerings as offerings_service
 from app.services import organizations as org_service
 
 PASSWORD = "TestPass123!"
@@ -151,4 +152,105 @@ async def test_program() -> AsyncIterator[dict]:
         await db.execute(
             text("delete from public.accreditation_programs where id = :id"),
             {"id": str(program_id)},
+        )
+
+
+@pytest_asyncio.fixture
+async def seeded_taxonomy_node() -> uuid.UUID:
+    """Un nodo real ya sembrado (fase 2) — no se crea uno nuevo por test."""
+    async with session_for_system() as db:
+        result = await db.execute(
+            text(
+                "select id from public.taxonomy_nodes where is_active order by level limit 1"
+            )
+        )
+        return result.scalar_one()
+
+
+@pytest_asyncio.fixture
+async def seeded_admin_division() -> uuid.UUID:
+    """Una comuna real ya sembrada (fase 2, nivel 3 = comuna)."""
+    async with session_for_system() as db:
+        result = await db.execute(
+            text(
+                "select id from public.admin_divisions where level = 3 and is_active limit 1"
+            )
+        )
+        return result.scalar_one()
+
+
+@pytest_asyncio.fixture
+async def supplier_offering(
+    seeded_taxonomy_node: uuid.UUID, seeded_admin_division: uuid.UUID
+) -> AsyncIterator[dict]:
+    """Una organización proveedora publicada, con un offering publicado
+    (categoría + territorio + capacidad) — candidato real para el motor de
+    matching, no un mock."""
+    email = f"pytest.supplier.{uuid.uuid4().hex[:12]}@example.com"
+    user = await auth_service.register(
+        first_name="Pytest", last_name="Supplier", email=email, password=PASSWORD
+    )
+    org_id = await org_service.create_organization(
+        created_by=user.user_id,
+        legal_name=f"Pytest Supplier {uuid.uuid4().hex[:8]}",
+        trade_name="Pytest Supplier",
+        rut=_random_valid_rut(),
+        capabilities=["SUPPLIER"],
+    )
+    await org_service.update_organization(
+        user_id=user.user_id,
+        organization_id=org_id,
+        legal_name="Pytest Supplier",
+        trade_name="Pytest Supplier",
+        short_description="Proveedor de prueba para tests de matching.",
+        description="Organización creada por la suite de tests de fase 6.",
+        value_proposition=None,
+        website_url=None,
+        linkedin_url=None,
+        general_email=None,
+        general_phone=None,
+        founded_year=2015,
+        company_size="SMALL",
+        employee_count=10,
+        visibility="PUBLIC",
+    )
+    await org_service.publish_organization(user_id=user.user_id, organization_id=org_id)
+
+    offering_id = await offerings_service.create_offering(
+        user_id=user.user_id,
+        organization_id=org_id,
+        offering_type="SERVICE",
+        name="Servicio de prueba",
+        short_description="Servicio de prueba para matching.",
+        monthly_capacity=100,
+    )
+    await offerings_service.set_taxonomy_nodes(
+        user_id=user.user_id,
+        organization_id=org_id,
+        offering_id=offering_id,
+        nodes=[{"node_id": seeded_taxonomy_node, "is_primary": True}],
+    )
+    await offerings_service.add_territory(
+        user_id=user.user_id,
+        organization_id=org_id,
+        offering_id=offering_id,
+        admin_division_id=seeded_admin_division,
+        coverage_type="OPERATIONAL",
+    )
+    await offerings_service.publish_offering(
+        user_id=user.user_id, organization_id=org_id, offering_id=offering_id
+    )
+
+    yield {
+        "user_id": user.user_id,
+        "organization_id": org_id,
+        "offering_id": offering_id,
+        "taxonomy_node_id": seeded_taxonomy_node,
+        "admin_division_id": seeded_admin_division,
+    }
+
+    await _delete_user(user.user_id)
+    async with session_for_system() as db:
+        await db.execute(
+            text("delete from public.organizations where id = :id"), {"id": str(org_id)}
         )

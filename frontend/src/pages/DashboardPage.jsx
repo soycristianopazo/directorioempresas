@@ -114,6 +114,8 @@ export default function DashboardPage() {
               <NextStep label="Invitar a tu equipo" to="/empresa/equipo" />
               <NextStep label="Buscar proveedores" to="/buscar" />
               <NextStep label="Crear tu lista de proveedores" to="/empresa/listas" />
+              <NextStep label="Registrar una necesidad de compra" to="/empresa/necesidades" />
+              <NextStep label="Crear un proceso de sourcing" to="/empresa/sourcing" />
             </CardContent>
           </Card>
         )}

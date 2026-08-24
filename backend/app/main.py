@@ -31,10 +31,13 @@ from app.api.v1.credentials import router as credentials_router
 from app.api.v1.discover import router as discover_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.documents import types_router as document_types_router
+from app.api.v1.matching import router as matching_router
 from app.api.v1.offerings import router as offerings_router
 from app.api.v1.organization_profile import router as organization_profile_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.reference import router as reference_router
+from app.api.v1.requirements import router as requirements_router
+from app.api.v1.sourcing import router as sourcing_router
 from app.api.v1.supplier_lists import router as supplier_lists_router
 from app.api.v1.taxonomy import industries_router as industries_router
 from app.api.v1.taxonomy import router as taxonomy_router
@@ -91,6 +94,9 @@ app.include_router(documents_router, prefix="/api")
 app.include_router(accreditation_programs_router, prefix="/api")
 app.include_router(accreditation_router, prefix="/api")
 app.include_router(admin_accreditation_router, prefix="/api")
+app.include_router(requirements_router, prefix="/api")
+app.include_router(sourcing_router, prefix="/api")
+app.include_router(matching_router, prefix="/api")
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
