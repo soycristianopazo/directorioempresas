@@ -1,0 +1,82 @@
+@import 'tailwindcss';
+
+/*
+  Sistema visual B2B: corporativo, denso en información, baja carga cognitiva.
+  Referencia de tono (§73): SaaS moderno, no portal gubernamental.
+*/
+
+@theme {
+  --color-ink-50: oklch(0.985 0.002 250);
+  --color-ink-100: oklch(0.967 0.003 250);
+  --color-ink-200: oklch(0.925 0.005 250);
+  --color-ink-300: oklch(0.86 0.008 250);
+  --color-ink-400: oklch(0.68 0.012 250);
+  --color-ink-500: oklch(0.55 0.014 250);
+  --color-ink-600: oklch(0.44 0.014 250);
+  --color-ink-700: oklch(0.35 0.013 250);
+  --color-ink-800: oklch(0.26 0.012 250);
+  --color-ink-900: oklch(0.19 0.011 250);
+  --color-ink-950: oklch(0.13 0.01 250);
+
+  --color-brand-50: oklch(0.97 0.015 240);
+  --color-brand-100: oklch(0.93 0.035 240);
+  --color-brand-200: oklch(0.87 0.06 240);
+  --color-brand-300: oklch(0.78 0.095 240);
+  --color-brand-400: oklch(0.68 0.13 245);
+  --color-brand-500: oklch(0.58 0.155 250);
+  --color-brand-600: oklch(0.5 0.16 253);
+  --color-brand-700: oklch(0.43 0.145 255);
+  --color-brand-800: oklch(0.36 0.115 256);
+  --color-brand-900: oklch(0.3 0.09 257);
+
+  --color-success: oklch(0.62 0.15 152);
+  --color-warning: oklch(0.75 0.15 75);
+  --color-danger: oklch(0.58 0.2 25);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  --radius-card: 0.75rem;
+}
+
+:root {
+  --background: var(--color-white);
+  --foreground: var(--color-ink-900);
+  --muted: var(--color-ink-500);
+  --border: var(--color-ink-200);
+  --surface: var(--color-ink-50);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: var(--color-ink-950);
+    --foreground: var(--color-ink-100);
+    --muted: var(--color-ink-400);
+    --border: var(--color-ink-800);
+    --surface: var(--color-ink-900);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Foco visible en todo elemento interactivo: accesibilidad básica (§91). */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+}

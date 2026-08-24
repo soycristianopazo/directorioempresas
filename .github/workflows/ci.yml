@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Typecheck · Lint · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Formato
+        run: npm run format:check
+
+      - name: Build
+        run: npm run build
+        env:
+          # Valores de marcador: el build no consulta la base, pero la
+          # validación de entorno en src/lib/env.ts exige que estén presentes.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'placeholder-anon-key-for-build' }}
+          NEXT_PUBLIC_SITE_URL: http://localhost:3000
+
+  database:
+    name: Migraciones · RLS (pgTAP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Levantar Supabase local
+        run: supabase start
+
+      - name: Verificar que las migraciones aplican en limpio
+        run: supabase db reset --no-seed
+
+      - name: Lint de base de datos
+        run: supabase db lint --level warning
+
+      # Bloquea el merge si alguna política de RLS deja de aislar
+      # organizaciones. Ver docs/01-ARQUITECTURA.md §I.4.
+      - name: Pruebas de RLS
+        run: supabase test db
+
+      - name: Detener
+        if: always()
+        run: supabase stop --no-backup

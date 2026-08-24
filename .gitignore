@@ -1,0 +1,39 @@
+# dependencias
+node_modules/
+.pnp
+.pnp.js
+
+# next
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# entorno — NUNCA commitear claves
+.env
+.env.local
+.env*.local
+.env.production
+
+# supabase
+supabase/.temp/
+supabase/.branches/
+supabase/logs/
+
+# sistema
+.DS_Store
+Thumbs.db
+
+# editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# logs
+npm-debug.log*
+yarn-error.log*
+*.log
+
+# claude code
+.claude/settings.local.json
