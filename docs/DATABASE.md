@@ -50,6 +50,11 @@
 | `0031_supplier_lists.sql` | `supplier_lists`, `supplier_list_items` — listas de proveedores guardadas por un comprador |
 | `0032_analytics.sql` | `search_logs`, `search_impressions`, `profile_views`, `offering_views` — insert-only (salvo el agregado diario de impresiones), sin policy de usuario |
 | `0033_fase4_rls.sql` | RLS de las tablas de 0030-0032 |
+| `0034_document_repository.sql` | `document_types` (seed chileno: F30, F30-1, carpeta tributaria, vigencia de sociedad, RUT/SII, póliza RC, reglamento interno, accidentabilidad, balance financiero), `organization_documents`, `organization_document_versions` (append-only, reemplaza a la versión activa vía `status`, nunca borra); `organization_certifications.document_version_id` |
+| `0035_accreditation_programs.sql` | `accreditation_programs`, `requirement_groups`, `accreditation_requirements`, `accreditation_status_transitions` (seed de las 12 transiciones válidas de la máquina de estados, ver §F.3 de [01-ARQUITECTURA.md](01-ARQUITECTURA.md)) + seed del programa `ACREDITACION_BASE` (4 secciones, 6 exigencias) |
+| `0036_accreditation_enrollments.sql` | `accreditation_enrollments`, `accreditation_fulfillments`, `accreditation_section_progress`, `accreditation_status_history` (append-only), `accreditation_review_events` (append-only) |
+| `0037_badges.sql` | `badge_definitions` (`rule_expression jsonb`, seed de 3 badges automáticos) + `organization_badges` |
+| `0038_fase5_rls.sql` | RLS de las tablas de 0034-0037 |
 
 Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió contra la base real — se agrega una nueva. (Durante el desarrollo activo de una fase, mientras nada se ha compartido/aplicado en otro entorno, sí se corrige el archivo en el lugar y se reaplica — ver el historial de 0012 como ejemplo real de esto.)
 
@@ -170,6 +175,11 @@ los RPCs de antes:
 | `search.reindex_offering` / `reindex_org_offerings` | Recalcula `supplier_search_index`, llamado desde `offerings.py`/`organizations.py` tras cada mutación relevante |
 | `search.search_offerings` / `get_public_organization` | Búsqueda facetada y perfil público de organización — consumidos por `app/api/public.py` (Jinja2) y `/api/discover/*` (JSON, SPA) |
 | `supplier_lists.*` | CRUD de listas de proveedores guardadas (`vendor_list.read`/`vendor_list.manage`) |
+| `documents.*` | Repositorio de evidencia — subida versionada a `org-documents`, validación por magic bytes (`app.core.file_validation`), permisos `document.read`/`write`/`delete` |
+| `accreditation.enroll` / `submit_evidence` / `submit_for_review` / `respond_to_observation` | Lado proveedor de la postulación — cada transición de estado se valida contra `accreditation_status_transitions` (dato, no código) antes de aplicarse |
+| `accreditation.review_fulfillment` / `decide_enrollment` | Lado revisor (`platform.review_accreditation`, vía `app.has_platform_permission()` — NO `app.has_permission()`, porque un revisor de plataforma no pertenece a la organización postulante) |
+| `accreditation._recompute_completion` | Fórmula de completitud (§F.4): `Σ(requirement.weight × fulfillment_factor) / Σ requirement.weight`, global y por sección, recalculada en la misma transacción tras cada mutación relevante — mismo patrón que `completion.recompute_completion_pct`. La vigencia (`expires_at >= current_date`) se evalúa en la propia consulta, no depende de un job — sin fase 5.8 (job diario), un ítem `APPROVED` pero vencido pierde su crédito de completitud al leer, aunque su `status` guardado no cambie hasta que algo lo toque |
+| `badges.evaluate_badges_for_org` | Evaluador determinístico de `badge_definitions.rule_expression` (`{"all": [{"fact", "op", "value"}]}`) — nunca reglas hardcodeadas en Python; llamado desde `accreditation.decide_enrollment` en la misma transacción |
 
 Todas ellas verifican el permiso ANTES de mutar (no dejan que RLS bloquee el
 `UPDATE`/`INSERT` y lo detecten por sus efectos) — ver el comentario en

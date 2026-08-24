@@ -16,12 +16,15 @@ import CompanyCoveragePage from '@/pages/CompanyCoveragePage';
 import CatalogPage from '@/pages/CatalogPage';
 import OfferingDetailPage from '@/pages/OfferingDetailPage';
 import CredentialsPage from '@/pages/CredentialsPage';
+import DocumentsPage from '@/pages/DocumentsPage';
+import AccreditationPage from '@/pages/AccreditationPage';
 import BuyerSearchPage from '@/pages/BuyerSearchPage';
 import ComparePage from '@/pages/ComparePage';
 import SupplierListsPage from '@/pages/SupplierListsPage';
 import TeamPage from '@/pages/TeamPage';
 import InvitationPage from '@/pages/InvitationPage';
 import AdminTaxonomyPage from '@/pages/admin/AdminTaxonomyPage';
+import AdminAccreditationPage from '@/pages/admin/AdminAccreditationPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 
 /**
@@ -56,6 +59,8 @@ export const router = createBrowserRouter([
               { path: '/empresa/catalogo', element: <CatalogPage /> },
               { path: '/empresa/catalogo/:offeringId', element: <OfferingDetailPage /> },
               { path: '/empresa/credenciales', element: <CredentialsPage /> },
+              { path: '/empresa/documentos', element: <DocumentsPage /> },
+              { path: '/empresa/acreditacion', element: <AccreditationPage /> },
               { path: '/empresa/equipo', element: <TeamPage /> },
               { path: '/buscar', element: <BuyerSearchPage /> },
               { path: '/comparar', element: <ComparePage /> },
@@ -71,7 +76,10 @@ export const router = createBrowserRouter([
         children: [
           {
             element: <AdminLayout />,
-            children: [{ path: '/admin/taxonomia', element: <AdminTaxonomyPage /> }],
+            children: [
+              { path: '/admin/taxonomia', element: <AdminTaxonomyPage /> },
+              { path: '/admin/acreditacion', element: <AdminAccreditationPage /> },
+            ],
           },
         ],
       },

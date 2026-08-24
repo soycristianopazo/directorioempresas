@@ -20,12 +20,17 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.public import router as public_router
+from app.api.v1.accreditation import programs_router as accreditation_programs_router
+from app.api.v1.accreditation import router as accreditation_router
+from app.api.v1.admin_accreditation import router as admin_accreditation_router
 from app.api.v1.admin_taxonomy import industries_router as admin_industries_router
 from app.api.v1.admin_taxonomy import router as admin_taxonomy_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.credentials import reference_router as certification_types_router
 from app.api.v1.credentials import router as credentials_router
 from app.api.v1.discover import router as discover_router
+from app.api.v1.documents import router as documents_router
+from app.api.v1.documents import types_router as document_types_router
 from app.api.v1.offerings import router as offerings_router
 from app.api.v1.organization_profile import router as organization_profile_router
 from app.api.v1.organizations import router as organizations_router
@@ -81,6 +86,11 @@ app.include_router(credentials_router, prefix="/api")
 app.include_router(certification_types_router, prefix="/api")
 app.include_router(discover_router, prefix="/api")
 app.include_router(supplier_lists_router, prefix="/api")
+app.include_router(document_types_router, prefix="/api")
+app.include_router(documents_router, prefix="/api")
+app.include_router(accreditation_programs_router, prefix="/api")
+app.include_router(accreditation_router, prefix="/api")
+app.include_router(admin_accreditation_router, prefix="/api")
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

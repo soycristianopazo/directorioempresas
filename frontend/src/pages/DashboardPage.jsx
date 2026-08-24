@@ -96,7 +96,7 @@ export default function DashboardPage() {
               <NextStep label="Publicar productos y servicios" to="/empresa/catalogo" />
               <NextStep label="Definir cobertura territorial" to="/empresa/cobertura" />
               <NextStep label="Certificaciones y casos de éxito" to="/empresa/credenciales" />
-              <NextStep label="Iniciar acreditación" phase="Próxima fase" />
+              <NextStep label="Iniciar acreditación" to="/empresa/acreditacion" />
             </CardContent>
           </Card>
         )}

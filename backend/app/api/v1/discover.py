@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import PublicSession
 from app.schemas.search import (
+    BadgeSummaryOut,
     FacetItemOut,
     FacetsOut,
     PublicOfferingSummaryOut,
@@ -118,4 +119,5 @@ async def get_organization(session: PublicSession, slug: str) -> PublicOrganizat
             for c in profile["certifications"]
             if c.certification_type_id in cert_types
         ],
+        badges=[BadgeSummaryOut(**b) for b in profile["badges"]],
     )

@@ -62,6 +62,13 @@ class PublicOfferingSummaryOut(BaseModel):
     photo_url: str | None
 
 
+class BadgeSummaryOut(BaseModel):
+    code: str
+    name: str
+    description: str | None
+    icon: str | None
+
+
 class PublicOrganizationOut(BaseModel):
     id: UUID
     legal_name: str
@@ -76,3 +83,4 @@ class PublicOrganizationOut(BaseModel):
     territories: list[str]
     offerings: list[PublicOfferingSummaryOut]
     certifications: list[str]
+    badges: list[BadgeSummaryOut]

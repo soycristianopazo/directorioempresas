@@ -237,6 +237,7 @@ async def provider_profile_page(
             ],
             "case_studies": profile["case_studies"],
             "public_contacts": profile["contacts"],
+            "trust_badges": profile["badges"],
             "current_year": datetime.now(timezone.utc).year,
         },
     )

@@ -32,6 +32,17 @@
     </div>
   </div>
 
+  {% if trust_badges %}
+  <section class="profile-section">
+    <h2>Acreditaciones</h2>
+    <div class="result-meta">
+      {% for b in trust_badges %}
+      <span class="badge" title="{{ b.description or '' }}">✓ {{ b.name }}</span>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if org.description %}
   <section class="profile-section">
     <h2>Sobre la empresa</h2>

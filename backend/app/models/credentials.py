@@ -84,6 +84,10 @@ class OrganizationCertification(Base):
     verification_status: Mapped[str] = mapped_column(
         CertificationVerificationStatusEnum, nullable=False, server_default="UNVERIFIED"
     )
+    document_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organization_document_versions.id", ondelete="SET NULL"),
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")

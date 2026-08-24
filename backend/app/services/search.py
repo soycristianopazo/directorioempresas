@@ -22,6 +22,7 @@ from app.db.rls import session_for_system
 from app.repositories import credentials as credentials_repo
 from app.repositories import offerings as offerings_repo
 from app.repositories import organization_profile as profile_repo
+from app.repositories import badges as badges_repo
 from app.repositories import organizations as organizations_repo
 from app.repositories import search as search_repo
 
@@ -173,6 +174,7 @@ async def get_public_organization(session: AsyncSession, slug: str) -> dict | No
             session, org.id
         ),
         "case_studies": await credentials_repo.list_case_studies(session, org.id),
+        "badges": await badges_repo.list_org_badges(session, org.id),
     }
 
 
