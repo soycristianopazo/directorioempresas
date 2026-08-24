@@ -180,6 +180,30 @@ async def seeded_admin_division() -> uuid.UUID:
 
 
 @pytest_asyncio.fixture
+async def competing_supplier() -> AsyncIterator[dict]:
+    """Segunda organización proveedora, independiente de `supplier_offering`
+    — el "Proveedor B" del punto de control 7 (docs/04-ROADMAP.md): sin
+    offering, no lo necesita para probar aislamiento de cotizaciones."""
+    email = f"pytest.competitor.{uuid.uuid4().hex[:12]}@example.com"
+    user = await auth_service.register(
+        first_name="Pytest", last_name="Competitor", email=email, password=PASSWORD
+    )
+    org_id = await org_service.create_organization(
+        created_by=user.user_id,
+        legal_name=f"Pytest Competitor {uuid.uuid4().hex[:8]}",
+        trade_name="Pytest Competitor",
+        rut=_random_valid_rut(),
+        capabilities=["SUPPLIER"],
+    )
+    yield {"user_id": user.user_id, "organization_id": org_id}
+    await _delete_user(user.user_id)
+    async with session_for_system() as db:
+        await db.execute(
+            text("delete from public.organizations where id = :id"), {"id": str(org_id)}
+        )
+
+
+@pytest_asyncio.fixture
 async def supplier_offering(
     seeded_taxonomy_node: uuid.UUID, seeded_admin_division: uuid.UUID
 ) -> AsyncIterator[dict]:

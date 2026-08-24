@@ -21,6 +21,8 @@ import AccreditationPage from '@/pages/AccreditationPage';
 import RequirementsPage from '@/pages/RequirementsPage';
 import SourcingEventsPage from '@/pages/SourcingEventsPage';
 import SourcingEventDetailPage from '@/pages/SourcingEventDetailPage';
+import SupplierInvitationsPage from '@/pages/SupplierInvitationsPage';
+import SupplierQuotationPage from '@/pages/SupplierQuotationPage';
 import MatchResultsPage from '@/pages/MatchResultsPage';
 import BuyerSearchPage from '@/pages/BuyerSearchPage';
 import ComparePage from '@/pages/ComparePage';
@@ -72,6 +74,11 @@ export const router = createBrowserRouter([
                 path: '/empresa/sourcing/:eventId/resultados',
                 element: <MatchResultsPage />,
               },
+              {
+                path: '/empresa/sourcing/:eventId/mi-cotizacion',
+                element: <SupplierQuotationPage />,
+              },
+              { path: '/empresa/invitaciones', element: <SupplierInvitationsPage /> },
               { path: '/empresa/equipo', element: <TeamPage /> },
               { path: '/buscar', element: <BuyerSearchPage /> },
               { path: '/comparar', element: <ComparePage /> },

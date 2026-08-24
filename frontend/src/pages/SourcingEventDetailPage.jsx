@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ClipboardCheck, FileSearch, Plus, Trash2 } from 'lucide-react';
+import {
+  Ban,
+  ClipboardCheck,
+  FileSearch,
+  HelpCircle,
+  Lock,
+  Plus,
+  Receipt,
+  Send,
+  Trash2,
+  Unlock,
+  UserPlus,
+} from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,12 +22,62 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SelectNative } from '@/components/ui/select-native';
+import { Textarea } from '@/components/ui/textarea';
 import { CategorySelector } from '@/components/CategorySelector';
+import { ConversationPanel } from '@/components/ConversationPanel';
 import { getCertificationTypes } from '@/lib/credentialsApi';
 import { listPrograms } from '@/lib/accreditationApi';
 import { getIndustries } from '@/lib/taxonomyApi';
 import { getAdminDivisions } from '@/lib/referenceApi';
 import { addCriterion, addItem, deleteCriterion, getEvent, publishEvent } from '@/lib/sourcingApi';
+import { disqualifyInvitation, inviteSupplier, listInvitations } from '@/lib/invitationsApi';
+import { answerQuestion, listQuestions, publishAnswer } from '@/lib/qaApi';
+import { listQuotations, openBids } from '@/lib/quotationsApi';
+
+const INVITATION_STATUS_LABELS = {
+  INVITED: 'Invitado',
+  VIEWED: 'Vista',
+  NDA_ACCEPTED: 'NDA aceptado',
+  INTERESTED: 'Interesado',
+  PARTICIPATING: 'Participando',
+  QUOTED: 'Cotización enviada',
+  DECLINED: 'Declinado',
+  NO_RESPONSE: 'Sin respuesta',
+  WITHDRAWN: 'Retirado',
+  DISQUALIFIED: 'Descalificado',
+  EXPIRED: 'Expirado',
+};
+
+const INVITATION_STATUS_VARIANT = {
+  INVITED: 'neutral',
+  VIEWED: 'neutral',
+  NDA_ACCEPTED: 'brand',
+  INTERESTED: 'brand',
+  PARTICIPATING: 'success',
+  QUOTED: 'success',
+  DECLINED: 'destructive',
+  WITHDRAWN: 'destructive',
+  DISQUALIFIED: 'destructive',
+  NO_RESPONSE: 'warning',
+  EXPIRED: 'warning',
+};
+
+const TERMINAL_INVITATION_STATUSES = new Set([
+  'DECLINED',
+  'WITHDRAWN',
+  'DISQUALIFIED',
+  'NO_RESPONSE',
+  'EXPIRED',
+]);
+
+const PARTICIPATING_INVITATION_STATUSES = new Set(['PARTICIPATING', 'QUOTED']);
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'medium', timeStyle: 'short' }).format(
+    new Date(value),
+  );
+}
 
 const CRITERION_TYPES = [
   { value: 'ACCREDITATION', label: 'Acreditación' },
@@ -32,9 +94,16 @@ export default function SourcingEventDetailPage() {
   const { activeOrg } = useAuth();
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [invitations, setInvitations] = useState([]);
 
   async function loadAll() {
-    setDetail(await getEvent(activeOrg.id, eventId));
+    const d = await getEvent(activeOrg.id, eventId);
+    setDetail(d);
+    if (d.event.status === 'PUBLISHED') {
+      setInvitations(await listInvitations(activeOrg.id, eventId));
+    } else {
+      setInvitations([]);
+    }
   }
 
   useEffect(() => {
@@ -93,6 +162,27 @@ export default function SourcingEventDetailPage() {
         criteria={criteria}
         onChanged={loadAll}
       />
+
+      {event.status === 'PUBLISHED' && (
+        <>
+          <InvitationsCard
+            organizationId={activeOrg.id}
+            eventId={eventId}
+            invitations={invitations}
+            onChanged={loadAll}
+          />
+          <QuestionsCard organizationId={activeOrg.id} eventId={eventId} />
+          <QuotationsCard organizationId={activeOrg.id} eventId={eventId} event={event} />
+          <ConversationPanel
+            organizationId={activeOrg.id}
+            contextType="SOURCING_EVENT"
+            contextId={eventId}
+            participantOrganizationIds={invitations
+              .filter((i) => PARTICIPATING_INVITATION_STATUSES.has(i.status))
+              .map((i) => i.supplier_organization_id)}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -419,6 +509,333 @@ function CriteriaCard({ organizationId, eventId, criteria, onChanged }) {
             </Button>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function InvitationsCard({ organizationId, eventId, invitations, onChanged }) {
+  const [supplierOrganizationId, setSupplierOrganizationId] = useState('');
+  const [inviting, setInviting] = useState(false);
+
+  async function onInvite() {
+    if (!supplierOrganizationId.trim()) return;
+    setInviting(true);
+    try {
+      await inviteSupplier(organizationId, eventId, {
+        supplierOrganizationId: supplierOrganizationId.trim(),
+      });
+      toast.success('Proveedor invitado');
+      setSupplierOrganizationId('');
+      await onChanged();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo invitar al proveedor');
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function onDisqualify(invitationId) {
+    const reason = window.prompt('Motivo de descalificación (opcional)');
+    if (reason === null) return;
+    try {
+      await disqualifyInvitation(organizationId, eventId, invitationId, reason || null);
+      toast.success('Invitación descalificada');
+      await onChanged();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo descalificar');
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UserPlus className="size-4 text-primary" />
+          Proveedores invitados ({invitations.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <ul className="space-y-2">
+          {invitations.map((inv) => (
+            <li
+              key={inv.id}
+              className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"
+            >
+              <div>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {inv.supplier_organization_id}
+                </span>
+                <Badge
+                  variant={INVITATION_STATUS_VARIANT[inv.status] || 'neutral'}
+                  className="ml-2"
+                >
+                  {INVITATION_STATUS_LABELS[inv.status] || inv.status}
+                </Badge>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  invitado {formatDateTime(inv.invited_at)}
+                </span>
+              </div>
+              {!TERMINAL_INVITATION_STATUSES.has(inv.status) && (
+                <Button variant="ghost" size="sm" onClick={() => onDisqualify(inv.id)}>
+                  <Ban className="size-3.5" />
+                  Descalificar
+                </Button>
+              )}
+            </li>
+          ))}
+          {invitations.length === 0 && (
+            <p className="text-sm text-muted-foreground">Aún no invitas proveedores.</p>
+          )}
+        </ul>
+
+        <div className="flex items-end gap-2 border-t pt-4">
+          <div className="flex-1 space-y-1.5">
+            <Label htmlFor="supplier-org-id">ID de organización proveedora</Label>
+            <Input
+              id="supplier-org-id"
+              placeholder="UUID de la organización"
+              value={supplierOrganizationId}
+              onChange={(e) => setSupplierOrganizationId(e.target.value)}
+            />
+          </div>
+          <Button size="sm" onClick={onInvite} disabled={inviting}>
+            <Send className="size-4" />
+            Invitar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const QA_VISIBILITY_OPTIONS = [
+  { value: 'ALL_PARTICIPANTS', label: 'Visible para todos los participantes' },
+  { value: 'PRIVATE_TO_ASKER', label: 'Solo visible para quien preguntó' },
+];
+
+function QuestionsCard({ organizationId, eventId }) {
+  const [questions, setQuestions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [answerDrafts, setAnswerDrafts] = useState({});
+
+  async function loadQuestions() {
+    setQuestions(await listQuestions(organizationId, eventId));
+  }
+
+  useEffect(() => {
+    setLoading(true);
+    loadQuestions().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organizationId, eventId]);
+
+  function draftFor(questionId) {
+    return answerDrafts[questionId] || { body: '', visibility: 'ALL_PARTICIPANTS' };
+  }
+
+  function updateDraft(questionId, field, value) {
+    setAnswerDrafts((prev) => ({
+      ...prev,
+      [questionId]: { ...draftFor(questionId), [field]: value },
+    }));
+  }
+
+  async function onAnswer(question) {
+    const draft = draftFor(question.id);
+    if (!draft.body.trim()) return;
+    try {
+      await answerQuestion(organizationId, eventId, question.id, draft.body.trim(), draft.visibility);
+      toast.success('Respuesta enviada');
+      setAnswerDrafts((prev) => {
+        const next = { ...prev };
+        delete next[question.id];
+        return next;
+      });
+      await loadQuestions();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo responder');
+    }
+  }
+
+  async function onPublish(question) {
+    try {
+      await publishAnswer(organizationId, eventId, question.id);
+      toast.success('Respuesta publicada');
+      await loadQuestions();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo publicar la respuesta');
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <HelpCircle className="size-4 text-primary" />
+          Preguntas y respuestas
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <div className="h-16 animate-pulse rounded-lg bg-secondary" />
+        ) : (
+          <>
+            {questions.map((q) => (
+              <div key={q.id} className="space-y-2 rounded-lg border px-3 py-2 text-sm">
+                <div>
+                  <p>{q.body}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {q.asked_by_organization_id} · {formatDateTime(q.asked_at)}
+                  </p>
+                </div>
+
+                {q.answer_body ? (
+                  <div className="rounded-lg bg-secondary/60 px-3 py-2">
+                    <p>{q.answer_body}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatDateTime(q.answered_at)}
+                      {q.answer_visibility === 'PRIVATE_TO_ASKER' && ' · solo para quien preguntó'}
+                    </p>
+                    {!q.published_at && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-2"
+                        onClick={() => onPublish(q)}
+                      >
+                        Publicar respuesta
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2 border-t pt-2">
+                    <Textarea
+                      placeholder="Escribe una respuesta…"
+                      value={draftFor(q.id).body}
+                      onChange={(e) => updateDraft(q.id, 'body', e.target.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <SelectNative
+                        className="max-w-xs"
+                        value={draftFor(q.id).visibility}
+                        onChange={(e) => updateDraft(q.id, 'visibility', e.target.value)}
+                      >
+                        {QA_VISIBILITY_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </SelectNative>
+                      <Button size="sm" onClick={() => onAnswer(q)}>
+                        Responder
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {questions.length === 0 && (
+              <p className="text-sm text-muted-foreground">Sin preguntas todavía.</p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function QuotationsCard({ organizationId, eventId, event }) {
+  const [quotations, setQuotations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
+
+  async function loadQuotations() {
+    setQuotations(await listQuotations(organizationId, eventId));
+  }
+
+  useEffect(() => {
+    setLoading(true);
+    loadQuotations().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organizationId, eventId]);
+
+  async function onOpenBids() {
+    setOpening(true);
+    try {
+      await openBids(organizationId, eventId);
+      toast.success('Ofertas abiertas');
+      await loadQuotations();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron abrir las ofertas');
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  // El sellado lo hace RLS en la base (services/quotations.py: "no hay
+  // lógica de sellado acá, la hace la base") — mientras no se abran las
+  // ofertas, el backend no devuelve montos. event.bid_opened_at es la señal
+  // real (expuesta en SourcingEventOut); no hace falta inferirlo de si hay
+  // filas con total_amount_base.
+  const isSealedAndUnopened = event.bid_mode === 'SEALED' && !event.bid_opened_at;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Receipt className="size-4 text-primary" />
+          Cotizaciones recibidas
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <div className="h-16 animate-pulse rounded-lg bg-secondary" />
+        ) : isSealedAndUnopened ? (
+          <div className="space-y-3 rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+            <p className="flex items-center justify-center gap-1.5">
+              <Lock className="size-4" />
+              Las ofertas están selladas hasta la apertura.
+            </p>
+            <Button size="sm" onClick={onOpenBids} disabled={opening} className="gap-1.5">
+              <Unlock className="size-4" />
+              {opening ? 'Abriendo…' : 'Abrir ofertas'}
+            </Button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="border-b bg-secondary/50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Proveedor</th>
+                  <th className="px-3 py-2 text-left">Ronda</th>
+                  <th className="px-3 py-2 text-left">Total</th>
+                  <th className="px-3 py-2 text-left">Moneda</th>
+                  <th className="px-3 py-2 text-left">Total (moneda base)</th>
+                  <th className="px-3 py-2 text-left">Enviado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotations.map((q) => (
+                  <tr key={q.id} className="border-b last:border-b-0">
+                    <td className="px-3 py-2 font-mono text-xs">{q.supplier_organization_id}</td>
+                    <td className="px-3 py-2">{q.round_number ?? '—'}</td>
+                    <td className="px-3 py-2">{q.total_amount ?? '—'}</td>
+                    <td className="px-3 py-2">{q.currency_code ?? '—'}</td>
+                    <td className="px-3 py-2">{q.total_amount_base ?? '—'}</td>
+                    <td className="px-3 py-2">{formatDateTime(q.submitted_at)}</td>
+                  </tr>
+                ))}
+                {quotations.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
+                      Aún no hay cotizaciones enviadas.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

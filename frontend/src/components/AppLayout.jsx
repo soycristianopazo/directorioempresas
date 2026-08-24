@@ -5,6 +5,7 @@ import {
   ClipboardList,
   FileSearch,
   FileText,
+  Inbox,
   LayoutDashboard,
   List,
   MapPinned,
@@ -13,6 +14,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
+import { NotificationBell } from '@/components/NotificationBell';
 import { OrganizationSwitcher } from '@/components/OrganizationSwitcher';
 import { UserMenu } from '@/components/UserMenu';
 import { cn } from '@/lib/utils';
@@ -29,6 +31,7 @@ const NAV = [
   { to: '/empresa/listas', label: 'Listas', icon: List },
   { to: '/empresa/necesidades', label: 'Necesidades', icon: ClipboardList },
   { to: '/empresa/sourcing', label: 'Sourcing', icon: FileSearch },
+  { to: '/empresa/invitaciones', label: 'Invitaciones', icon: Inbox },
   { to: '/empresa/equipo', label: 'Equipo', icon: Users },
 ];
 
@@ -52,13 +55,17 @@ export function AppLayout() {
 
           <OrganizationSwitcher />
 
-          <nav className="ml-auto hidden items-center gap-1 md:flex">
+          {/* min-w-0 permite que el nav se encoja dentro del flex row y
+              overflow-x-auto lo hace desplazable en vez de empujar la
+              campanita/menú de usuario fuera del viewport cuando hay muchos
+              items (13 y creciendo) a anchos de escritorio comunes. */}
+          <nav className="ml-auto hidden min-w-0 items-center gap-1 overflow-x-auto md:flex">
             {NAV.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  'flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                   isNavItemActive(item.to, currentPath) && 'bg-accent text-accent-foreground',
                 )}
               >
@@ -68,7 +75,8 @@ export function AppLayout() {
             ))}
           </nav>
 
-          <div className="ml-auto md:ml-0">
+          <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-0">
+            <NotificationBell />
             <UserMenu />
           </div>
         </div>

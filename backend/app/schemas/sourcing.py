@@ -62,6 +62,7 @@ class SourcingEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    organization_id: UUID
     requirement_id: UUID | None
     event_code: str
     name: str
@@ -77,6 +78,8 @@ class SourcingEventOut(BaseModel):
     max_invitations: int | None
     matching_weights: dict | None
     published_at: datetime | None
+    bid_opened_at: datetime | None
+    bid_opened_by: UUID | None
     created_at: datetime
 
 

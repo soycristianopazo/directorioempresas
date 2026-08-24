@@ -58,9 +58,26 @@ async def list_events(*, user_id: UUID, organization_id: UUID) -> list:
 async def get_event_detail(
     *, user_id: UUID, organization_id: UUID, event_id: UUID
 ) -> dict:
+    """A diferencia de `_get_owned_event` (usado por las mutaciones, siempre
+    estrictamente del comprador dueño), esta lectura también debe servir al
+    proveedor invitado — fase 7 (0048_fase7_rls_invitations_qa_ndas.sql ya le
+    da a RLS una rama adicional para eso, `has_active_sourcing_invitation`).
+    Encontrado en vivo: `_get_owned_event` rechazaba con 404 a un proveedor
+    con invitación activa real, porque comparaba
+    `event.organization_id != organization_id` sin contemplar que
+    `organization_id` acá puede ser la organización PROVEEDORA, no la
+    compradora. La sesión ya está fijada por usuario (`session_for_user`), así
+    que si `get_event` devuelve una fila, es porque RLS ya decidió que este
+    usuario puede verla — por cualquiera de las dos ramas — no hace falta
+    repetir esa decisión en Python. El chequeo de `sourcing_event.read` solo
+    aplica cuando quien pregunta ES el comprador dueño; para el proveedor,
+    RLS ya es la única puerta."""
     async with session_for_user(user_id) as db:
-        await _require(db, organization_id, PERM_READ)
-        event = await _get_owned_event(db, event_id, organization_id)
+        event = await sourcing_repo.get_event(db, event_id)
+        if event is None:
+            raise SourcingNotFoundError("Evento no encontrado")
+        if event.organization_id == organization_id:
+            await _require(db, organization_id, PERM_READ)
         return {
             "event": event,
             "lots": await sourcing_repo.list_lots(db, event_id),

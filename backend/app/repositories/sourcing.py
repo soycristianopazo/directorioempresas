@@ -29,17 +29,21 @@ async def has_permission(
 
 
 async def next_event_code(session: AsyncSession, *, event_type: str, year: int) -> str:
-    """RFQ-2026-0142: correlativo por año, compartido entre todos los
-    event_type (RFI/RFQ/RFP/...) — el prefijo identifica el tipo, no cambia
-    la serie."""
+    """RFQ-2026-0142: el número viene de una secuencia real
+    (`public.sourcing_event_code_seq`, 0053), no de `count(*)` — ese conteo
+    corría dentro de la sesión RLS-scoped del usuario, que solo ve las filas
+    de SU organización (0043_fase6_rls.sql), así que dos organizaciones
+    distintas creando cada una su primer evento del año generaban ambas
+    "...-0001" y colisionaban contra el UNIQUE de event_code. Una secuencia no
+    está sujeta a RLS y nextval() es atómica — sin condición de carrera, sin
+    fuga de conteo entre organizaciones. El número deja de reiniciar en 0001
+    cada año (sigue subiendo); el año en el propio código sigue siendo el dato
+    real de cuándo se creó."""
     result = await session.execute(
-        text(
-            "select count(*) from public.sourcing_events where event_code like :pattern"
-        ),
-        {"pattern": f"%-{year}-%"},
+        text("select nextval('public.sourcing_event_code_seq')")
     )
-    count = result.scalar_one()
-    return f"{event_type}-{year}-{count + 1:04d}"
+    n = result.scalar_one()
+    return f"{event_type}-{year}-{n:04d}"
 
 
 async def list_events(

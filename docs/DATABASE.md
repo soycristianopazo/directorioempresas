@@ -60,6 +60,16 @@
 | `0041_matching_results.sql` | `match_runs`, `match_results` — append-only (`REVOKE UPDATE, DELETE`), reproducibilidad vía `engine_version` + `weights_snapshot` |
 | `0042_search_index_matchable.sql` | `supplier_search_index` gana `is_matchable` (visibilidad graduada PUBLIC/REGISTERED/BUYERS_ONLY para cualquier comprador autenticado — superconjunto de `is_public`, que solo cubre PUBLIC para `anon`) |
 | `0043_fase6_rls.sql` | RLS de 0039-0042. Nada de esto es público, ni parcialmente — nunca hay un `select using (true)` ni `can_view_organization(...)` en este archivo |
+| `0044_sourcing_event_invitations.sql` | `app.sourcing_invitation_status` (11 estados, tomados de §G.1), `sourcing_event_invitations`, `sourcing_event_invitation_transitions` (transición-como-dato, mismo criterio que `accreditation_status_transitions`), `invitation_status_history` (append-only), `app.has_active_sourcing_invitation()` — cierra un vacío real de fase 6: ningún proveedor invitado podía leer el evento al que fue invitado |
+| `0045_sourcing_event_ndas.sql` | `sourcing_event_ndas` (versionado), `nda_acceptances` (append-only — `ip_address`/`user_agent` como en `user_sessions`/`audit_logs`, `accepted_at`/`accepted_by` como en `organization_invitations`, `checksum_sha256` como en `organization_document_versions`) |
+| `0046_sourcing_qa.sql` | `sourcing_questions`, `sourcing_answers` (`visibility` `PRIVATE_TO_ASKER`/`ALL_PARTICIPANTS`, anonimiza al autor de cara a otros participantes al publicar, nunca de cara al comprador) |
+| `0047_quotations.sql` | `quotations` (contenedor, `supplier_organization_id` propio POR FILA — la pieza que habilita Patrón E en 0049), `quotation_revisions` (append-only, `round_type` con un solo valor usable `'INITIAL'` hoy — `CLARIFICATION`/`COUNTER`/`BAFO` llegan con `ALTER TYPE` cuando exista `negotiation_rounds`, fase 8.5), `quotation_items`, `quotation_responses`, `quotation_documents` |
+| `0048_fase7_rls_invitations_qa_ndas.sql` | RLS de invitaciones/NDA/Q&A + policies SELECT adicionales (permisivas, sin tocar 0043) que dan al proveedor invitado visibilidad del evento/lotes/ítems/hitos/criterios/documentos vía `app.has_active_sourcing_invitation()` |
+| `0049_fase7_rls_quotations.sql` | RLS de cotizaciones — Patrón E (fila propia, no backstop de permisos). La policy más revisada del proyecto: es el Punto de control 7 del roadmap |
+| `0050_conversations.sql` | `conversations` (`context_type` tipado + FKs reales nullable, sin `CONTRACT` — no existe tabla `contracts` todavía, V2), `conversation_participants`, `messages`, `message_attachments`, `message_reads` |
+| `0051_notifications.sql` | `notifications`, `notification_preferences`, `notification_deliveries` (canal `EMAIL` stub, sin proveedor decidido — misma desviación de fase 5.10) |
+| `0052_fase7_rls_messaging_notifications.sql` | Patrón F (mensajería, por participante) + RLS de notificaciones — ver el gotcha del `RETURNING` en la sección de decisiones de `docs/RLS.md` |
+| `0053_sourcing_event_code_seq.sql` | `public.sourcing_event_code_seq` — reemplaza el `count(*)` de `next_event_code()` (fase 6), que era RLS-scoped por organización mientras `event_code` es único a nivel de tabla completa: dos organizaciones distintas creando cada una su primer RFQ del año colisionaban. Bug real de fase 6, encontrado y arreglado durante la verificación de fase 7 — ver `docs/RLS.md` |
 
 Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió contra la base real — se agrega una nueva. (Durante el desarrollo activo de una fase, mientras nada se ha compartido/aplicado en otro entorno, sí se corrige el archivo en el lugar y se reaplica — ver el historial de 0012 como ejemplo real de esto.)
 
@@ -157,6 +167,20 @@ Las páginas públicas indexables (`/discover`, `/proveedores/{slug}`, servidas 
 
 **`domain_events`** — Outbox transaccional. Sin consumidor todavía (llega en una fase posterior).
 
+### Invitación, cotizaciones y colaboración (fase 7)
+
+**`sourcing_event_invitations` / `invitation_status_history`** — Máquina de 11 estados (`INVITED → VIEWED → NDA_ACCEPTED → INTERESTED → PARTICIPATING → QUOTED`, más `DECLINED`/`NO_RESPONSE`/`WITHDRAWN`/`DISQUALIFIED`/`EXPIRED`) tomada de §G.1, recortada a lo que esta fase puede alcanzar por sí sola — `SHORTLISTED`/`NEGOTIATING`/`AWARDED`/`NOT_AWARDED` del diagrama original dependen de evaluación/adjudicación (fase 8, no existe la infraestructura). `services/invitations.py::_transition()` valida cada cambio contra `sourcing_event_invitation_transitions` antes de aplicarlo, mismo patrón que `accreditation.py`.
+
+**`sourcing_event_ndas` / `nda_acceptances`** — Versionado + aceptación con IP/hash, append-only. `services/invitations.py::accept_nda()` transiciona la invitación a `NDA_ACCEPTED` en la misma llamada.
+
+**`sourcing_questions` / `sourcing_answers`** — Q&A del evento. `sourcing_questions.is_answered` se mantiene por el service al insertar la respuesta, no por trigger. `visibility=ALL_PARTICIPANTS` anonimiza al autor frente a otros participantes cuando se publica (`published_at`), nunca frente al comprador.
+
+**`quotations` / `quotation_revisions` / `quotation_items` / `quotation_responses` / `quotation_documents`** — El bloque más sensible del proyecto (§G.3, Punto de control 7). `quotations` es el contenedor, sin montos, con `supplier_organization_id` propio por fila — la pieza que hace posible que RLS distinga Proveedor A de Proveedor B en la misma tabla (Patrón E, ver `docs/RLS.md`). `quotation_revisions` es append-only de verdad: cada envío es una fila nueva (`round_number` incremental), nunca se corrige una ya enviada — se permite reenviar antes del deadline, la sellabilidad no depende de eso. `quotations.current_revision_id` es el puntero autoritativo a la vigente, actualizado por `services/quotations.py::submit_revision()` en la misma transacción del INSERT; `quotation_revisions.is_current` es documental, nunca se lee para decidir cuál es la vigente.
+
+**`conversations` / `conversation_participants` / `messages` / `message_attachments` / `message_reads`** — Mensajería con contexto tipado. Actualizaciones en vivo por **polling** (`GET .../messages?after=<cursor>`), no Supabase Realtime — el frontend de este proyecto no tiene ninguna dependencia de Supabase (confirmado por grep completo), y Realtime necesitaría una identidad reconocida por Supabase Auth que este proyecto deliberadamente no emite (mismo motivo por el que se abandonaron GoTrue/PostgREST, ver nota de stack al inicio de este documento).
+
+**`notifications` / `notification_preferences` / `notification_deliveries`** — In-app únicamente en esta fase (`EMAIL` stub). Sin `domain_events` de por medio: sería el primer productor Y primer consumidor de ese outbox a la vez, construir el mecanismo completo para un solo caso de uso es la abstracción prematura que este proyecto evita — `services/notifications.py::notify_user()`/`notify_org()` escriben directo desde el service que dispara el evento de negocio, en un `session_for_system()` corto.
+
 ---
 
 ## Capa de aplicación (no son funciones SQL invocables)
@@ -187,6 +211,17 @@ los RPCs de antes:
 | `badges.evaluate_badges_for_org` | Evaluador determinístico de `badge_definitions.rule_expression` (`{"all": [{"fact", "op", "value"}]}`) — nunca reglas hardcodeadas en Python; llamado desde `accreditation.decide_enrollment` en la misma transacción |
 | `requirements.*` / `sourcing.*` | CRUD de la necesidad y del proceso de sourcing (`requirement.read`/`write`, `sourcing_event.read`/`create`/`publish`/`cancel`) |
 | `matching.run_matching` | El motor (§H, docs/03-MATCHING-ENGINE.md): Etapas 1-2 (recall + elegibilidad) en SQL vía `repositories/matching.py` — trabajo de conjuntos sobre hasta ~500 candidatos; Etapas 3-4 (scoring + ranking) en Python puro (`compute_category_fit`, `compute_capacity_fit`, etc. — sin DB, testeadas en `tests/test_matching_scoring.py`), sobre el conjunto ya filtrado. `dry_run=True` reusa el recall/elegibilidad ya calculado y solo re-corre scoring con pesos distintos, sin persistir — el preview de §H.7 sin pagar el costo de Etapa 1-2 en cada ajuste de slider |
+| `invitations.*` | Invitación y NDA (fase 7.1/7.2) — `_transition()` valida contra `sourcing_event_invitation_transitions` antes de aplicar; `mark_quoted()` es la única función pensada para llamarse desde OTRO service (`quotations.py`) dentro de una transacción ya abierta |
+| `qa.*` | Preguntas y respuestas (fase 7.4) — RLS ya filtra qué preguntas ve cada quién, el service no vuelve a filtrar en lectura; `publish_answer()` es idempotente (no renotifica en publicaciones repetidas) |
+| `quotations.*` | Contenedor + envío de revisiones + ceremonia de apertura (fase 7.5/7.6/7.7) — `submit_revision()` llama a `fx.to_base_amount()` antes de insertar y a `invitations.mark_quoted()` en la misma transacción |
+| `fx.get_latest_rate` / `fx.to_base_amount` | Primer consumidor real de `fx_rates` (existía desde `0011`, sin consumidor hasta esta fase) — convierte cada `quotation_revisions.total_amount` a la moneda del propio evento, con la tasa más reciente `valid_on <= fecha de envío` |
+| `messaging.*` | Conversaciones con contexto tipado (fase 7.8) — `list_messages(after=...)` es el contrato de polling que consume el frontend, sin websockets |
+| `notifications.notify_user` / `notify_org` | Escritura directa a `notifications` desde otros services (invitación enviada, pregunta respondida, cotización recibida, ofertas abiertas), vía `session_for_system()` — contrato público reutilizado por `invitations.py`/`qa.py`/`quotations.py` |
+
+**Gotchas reales de fase 7, encontrados en verificación manual en el navegador (ningún test los atrapó — quedan documentados para no repetirlos):**
+
+- **Choque de rutas real**: `app/api/v1/team.py` ya tenía `GET /organizations/{id}/invitations` (invitaciones de MIEMBROS DE EQUIPO) antes de que fase 7 agregara `GET /organizations/{id}/invitations` para la bandeja del PROVEEDOR — mismo path exacto, dos recursos distintos. FastAPI empareja por orden de montaje en `main.py`; `team_router` gana silenciosamente, sin error, y la ruta nueva queda inalcanzable. Renombrado a `/organizations/{id}/sourcing-invitations`. Antes de reutilizar un patrón de path (`/organizations/{id}/<recurso>`) en una fase nueva, `grep` el path exacto contra todos los routers ya montados.
+- **`services/sourcing.py::get_event_detail()` era estrictamente del comprador** (`event.organization_id == organization_id`, más `sourcing_event.read` de ESA organización) — correcto en fase 6, cuando nadie más que el comprador podía leer un evento. Fase 7 le dio a RLS una rama adicional para el proveedor invitado (`has_active_sourcing_invitation`, `0048`), pero el chequeo de Python de este endpoint específico no se actualizó — seguía rechazando con 404 a un proveedor con invitación real. Corregido: la comparación de dueño solo aplica (y solo entonces se exige el permiso) cuando `organization_id` coincide con la del evento; si no coincide, la única pregunta es si `get_event` (RLS-scoped) devolvió una fila — si la devolvió, es porque RLS ya decidió que este usuario puede verla por la otra rama. Lección: cuando RLS gana una rama de acceso nueva para un rol distinto, hay que revisar TODOS los checks de permiso en Python que leen esa misma tabla, no solo agregar la policy.
 
 Todas ellas verifican el permiso ANTES de mutar (no dejan que RLS bloquee el
 `UPDATE`/`INSERT` y lo detecten por sus efectos) — ver el comentario en
@@ -239,9 +274,12 @@ que un test unitario típico — es el costo de que atrape bugs reales de RLS,
 no una aproximación en memoria.
 
 **Personas de prueba** (`backend/seed.py`, contraseña `Directorio2026!` para todas):
-4 usuarios repartidos en 3 organizaciones (Transportes Alfa — proveedor+comprador,
-publicada; Minera Beta — comprador; Ingeniería del Sur — proveedor en borrador),
-más dos cuentas de backoffice sin organización: `admin@directorioempresas.cl`
+5 usuarios repartidos en 4 organizaciones (Transportes Alfa — proveedor+comprador,
+publicada; Minera Beta — comprador; Ingeniería del Sur — proveedor en borrador;
+Australis — proveedor, publicada, agregada en fase 7 porque el punto de control
+del modo sellado necesita DOS proveedoras publicadas compitiendo por el mismo
+evento, y hasta entonces solo Alfa lo estaba), más dos cuentas de backoffice sin
+organización: `admin@directorioempresas.cl`
 (`PLATFORM_ADMIN`, para `/admin/taxonomia`) y
 `revisor.acreditacion@directorioempresas.cl` (`ACCREDITATION_REVIEWER`, para
 `/admin/acreditacion`). El script es idempotente — lo vuelve a correr y

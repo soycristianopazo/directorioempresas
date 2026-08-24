@@ -17,13 +17,18 @@ en vez de insertar filas a mano. Dos razones:
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
 from app.db.rls import session_for_system
 from app.repositories import members as members_repo
 from app.services import auth as auth_service
+from app.services import invitations as invitations_service
 from app.services import organizations as org_service
+from app.services import quotations as quotations_service
+from app.services import requirements as requirements_service
+from app.services import sourcing as sourcing_service
 from app.services import team as team_service
 
 PASSWORD = "Directorio2026!"
@@ -33,6 +38,7 @@ USERS = [
     {"first_name": "Bruno", "last_name": "Díaz", "email": "bruno@transportesalfa.cl"},
     {"first_name": "Carla", "last_name": "Soto", "email": "carla@minerabeta.cl"},
     {"first_name": "Diego", "last_name": "Fuentes", "email": "diego@ingenieriasur.cl"},
+    {"first_name": "Eva", "last_name": "Navarro", "email": "eva@australis.cl"},
 ]
 
 # Cuenta de backoffice: no pertenece a ninguna organización, solo tiene un rol
@@ -64,7 +70,12 @@ async def wipe_existing() -> None:
         await db.execute(
             delete(Organization).where(
                 Organization.slug.in_(
-                    ["transportes-alfa", "minera-beta", "ingenieria-del-sur"]
+                    [
+                        "transportes-alfa",
+                        "minera-beta",
+                        "ingenieria-del-sur",
+                        "servicios-australis",
+                    ]
                 )
             )
         )
@@ -163,6 +174,43 @@ async def main() -> None:
         f"  ✓ Ingeniería del Sur ({sur_id}) — proveedor, perfil en borrador (a propósito)"
     )
 
+    # Segunda proveedora publicada — Alfa es la única publicada hasta acá, y
+    # fase 7 (sellado) necesita DOS proveedoras compitiendo por el mismo
+    # evento para que el punto de control ("Proveedor B no ve la oferta del
+    # Proveedor A") sea demostrable en el navegador, no solo en un test.
+    australis_id = await org_service.create_organization(
+        created_by=accounts["eva@australis.cl"],
+        legal_name="Servicios Australis Ltda.",
+        trade_name="Australis",
+        rut="79.222.333-8",
+        capabilities=["SUPPLIER"],
+    )
+    await org_service.update_organization(
+        user_id=accounts["eva@australis.cl"],
+        organization_id=australis_id,
+        legal_name="Servicios Australis Ltda.",
+        trade_name="Australis",
+        short_description="Transporte de personal y carga para faenas mineras en el norte de Chile.",
+        description=(
+            "Flota propia y subcontratada para traslado de personal y carga "
+            "liviana en faenas mineras. Operamos en Antofagasta y Atacama "
+            "con protocolos de seguridad vial certificados."
+        ),
+        value_proposition="Cobertura regional flexible y tiempos de respuesta cortos frente a eventos no programados.",
+        website_url="https://australis.cl",
+        linkedin_url=None,
+        general_email="contacto@australis.cl",
+        general_phone="+56 55 987 6543",
+        founded_year=2015,
+        company_size="SMALL",
+        employee_count=35,
+        visibility="PUBLIC",
+    )
+    await org_service.publish_organization(
+        user_id=accounts["eva@australis.cl"], organization_id=australis_id
+    )
+    print(f"  ✓ Australis ({australis_id}) — proveedor, publicada (compite con Alfa)")
+
     print("\nArmando equipo y multiempresa...")
 
     # Bruno se une a Alfa como Ventas.
@@ -205,6 +253,126 @@ async def main() -> None:
         role_code="BUYER",
     )
     print(f"  ✓ Invitación pendiente en Minera Beta: {pending_url}")
+
+    print("\nCreando recorrido de fase 7 (sellado, dos proveedoras compitiendo)...")
+
+    requirement_id = await requirements_service.create_requirement(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        name="Transporte de personal a faena — turno 2026",
+    )
+    event_id = await sourcing_service.create_event(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        requirement_id=requirement_id,
+        name="RFQ Transporte de personal — turno 2026",
+        event_type="RFQ",
+        bid_mode="SEALED",
+        currency_code="CLP",
+        requires_nda=True,
+    )
+    item_id = await sourcing_service.add_item(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        event_id=event_id,
+        description="Traslado de personal — 40 pasajeros/día, turno diurno",
+        quantity=40,
+    )
+    await sourcing_service.upsert_stage(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        event_id=event_id,
+        stage_type="BID_DEADLINE",
+        scheduled_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    await invitations_service.upsert_nda(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        title="Acuerdo de confidencialidad — RFQ Transporte de personal",
+        body_text=(
+            "Toda la información compartida en este proceso (bases, precios, "
+            "condiciones) es confidencial y no puede divulgarse a terceros."
+        ),
+    )
+    await sourcing_service.publish_event(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        event_id=event_id,
+    )
+    print(f"  ✓ Evento sellado publicado ({event_id}), NDA exigido, cierra en 7 días")
+
+    alfa_invitation_id = await invitations_service.invite_supplier(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        supplier_organization_id=alfa_id,
+    )
+    australis_invitation_id = await invitations_service.invite_supplier(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        supplier_organization_id=australis_id,
+    )
+    print("  ✓ Invitadas Transportes Alfa y Australis")
+
+    # Alfa recorre el flujo completo y cotiza — el proveedor "A" del punto de
+    # control 7 (docs/04-ROADMAP.md): el que sí tiene una oferta que Australis
+    # nunca debe poder leer.
+    await invitations_service.get_invitation_detail(
+        user_id=accounts["ana@transportesalfa.cl"],
+        organization_id=alfa_id,
+        invitation_id=alfa_invitation_id,
+    )
+    await invitations_service.accept_nda(
+        user_id=accounts["ana@transportesalfa.cl"],
+        organization_id=alfa_id,
+        invitation_id=alfa_invitation_id,
+        ip_address="127.0.0.1",
+        user_agent="seed.py",
+    )
+    await invitations_service.express_interest(
+        user_id=accounts["ana@transportesalfa.cl"],
+        organization_id=alfa_id,
+        invitation_id=alfa_invitation_id,
+    )
+    await invitations_service.confirm_participation(
+        user_id=accounts["ana@transportesalfa.cl"],
+        organization_id=alfa_id,
+        invitation_id=alfa_invitation_id,
+    )
+    await quotations_service.submit_revision(
+        user_id=accounts["ana@transportesalfa.cl"],
+        organization_id=alfa_id,
+        sourcing_event_id=event_id,
+        currency_code="CLP",
+        valid_until=(datetime.now(timezone.utc) + timedelta(days=30)).date(),
+        subtotal=8_500_000,
+        tax_amount=1_615_000,
+        total_amount=10_115_000,
+        payment_terms="30 días fin de mes",
+        delivery_days=15,
+        warranty_terms=None,
+        exclusions=None,
+        notes="Incluye buses con acreditación minera vigente.",
+        items=[
+            {
+                "sourcing_event_item_id": item_id,
+                "quantity": 40,
+                "unit_price": 212_500,
+            }
+        ],
+    )
+    print("  ✓ Transportes Alfa cotizó (PARTICIPATING → QUOTED)")
+
+    # Australis solo llega a VIEWED — todavía interesada, sin cotizar. Deja
+    # la bandeja de invitaciones del proveedor con más de un estado real.
+    await invitations_service.get_invitation_detail(
+        user_id=accounts["eva@australis.cl"],
+        organization_id=australis_id,
+        invitation_id=australis_invitation_id,
+    )
+    print("  ✓ Australis vio la invitación (INVITED → VIEWED), sin cotizar todavía")
 
     print("\nCreando cuenta de backoffice...")
     admin_result = await auth_service.register(
@@ -267,6 +435,14 @@ async def main() -> None:
     print("\nTransportes Alfa  → publicada, pública, comprador+proveedor")
     print("Minera Beta       → activa, solo registrados, comprador")
     print("Ingeniería del Sur→ EN BORRADOR a propósito (perfil incompleto)")
+    print("Australis         → publicada, pública, proveedor (compite con Alfa)")
+    print(
+        "\nRecorrido fase 7: Minera Beta publicó un RFQ SELLADO con NDA, "
+        "invitó a Alfa y Australis — Alfa cotizó (QUOTED), Australis solo vio "
+        "la invitación (VIEWED). Iniciar sesión como carla@minerabeta.cl para "
+        "ver el evento sellado; como ana@transportesalfa.cl o "
+        "eva@australis.cl para ver la bandeja de invitaciones de cada una."
+    )
 
 
 if __name__ == "__main__":
