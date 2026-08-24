@@ -210,7 +210,36 @@ node scripts/storage-setup-buckets.mjs
 
 # Reconstruir el índice de búsqueda completo (reconciliación manual, fase 4)
 cd backend && PYTHONPATH=. python scripts/reindex_search.py
+
+# Tests de integración (contra la misma base real — no hay base de test aparte)
+cd backend && source .venv/bin/activate && python -m pytest tests/ -v
 ```
+
+**Tests de integración** (`backend/tests/`): corren contra la base real de
+desarrollo, ejercitando la capa de servicio directamente (sin HTTP) con datos
+desechables por test (`conftest.py`: usuario/organización/programa con sufijo
+aleatorio, borrados al terminar). Cubren lo que la verificación manual no
+atrapa de forma confiable entre fases: la fórmula de completitud (§F.4) y el
+límite de permiso proveedor/revisor (`app.has_permission` vs
+`app.has_platform_permission` — la confusión de estos dos costó un bug real en
+fase 5). `pytest.ini` fija `asyncio_default_fixture_loop_scope = session`:
+el engine de SQLAlchemy es un singleton de módulo (`app/db/session.py`) con
+su propio pool de conexiones asyncpg, y el scope de loop "function" por
+defecto de pytest-asyncio revienta esas conexiones al cerrar el loop de cada
+test — no es negociable, ver el comentario en el propio `pytest.ini`. Cada
+round-trip es real contra Supabase (sin mocks), así que la suite tarda más
+que un test unitario típico — es el costo de que atrape bugs reales de RLS,
+no una aproximación en memoria.
+
+**Personas de prueba** (`backend/seed.py`, contraseña `Directorio2026!` para todas):
+4 usuarios repartidos en 3 organizaciones (Transportes Alfa — proveedor+comprador,
+publicada; Minera Beta — comprador; Ingeniería del Sur — proveedor en borrador),
+más dos cuentas de backoffice sin organización: `admin@directorioempresas.cl`
+(`PLATFORM_ADMIN`, para `/admin/taxonomia`) y
+`revisor.acreditacion@directorioempresas.cl` (`ACCREDITATION_REVIEWER`, para
+`/admin/acreditacion`). El script es idempotente — lo vuelve a correr y
+reemplaza la corrida anterior. Usar estas cuentas en vez de registrar y
+otorgar roles a mano contra la base real en cada verificación.
 
 **Storage (fase 3):** dos buckets — `org-media` (público, 8 MB, imágenes) para
 logos/fotos, `org-documents` (privado, 20 MB, PDF) para fichas técnicas,

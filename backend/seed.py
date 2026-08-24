@@ -39,6 +39,14 @@ USERS = [
 # de plataforma. Se usa para probar /admin/taxonomia de punta a punta (fase 2).
 PLATFORM_ADMIN_EMAIL = "admin@directorioempresas.cl"
 
+# Igual que el admin de arriba, pero con el rol de plataforma acotado que usa
+# la fase 5: platform.review_accreditation vía ACCREDITATION_REVIEWER, no
+# platform.manage_taxonomy. Sin esta cuenta, cada verificación de
+# /admin/acreditacion obligaba a registrar un usuario y otorgarle el rol a
+# mano contra la base real — ver docs/RLS.md, "Un revisor de plataforma se
+# verifica con app.has_platform_permission(), nunca con app.has_permission()".
+ACCREDITATION_REVIEWER_EMAIL = "revisor.acreditacion@directorioempresas.cl"
+
 
 async def wipe_existing() -> None:
     """Limpia corridas previas del seed para poder ejecutarlo repetidas veces."""
@@ -47,7 +55,10 @@ async def wipe_existing() -> None:
     from app.models.organization import Organization
     from app.models.user import User
 
-    emails = tuple(u["email"] for u in USERS) + (PLATFORM_ADMIN_EMAIL,)
+    emails = tuple(u["email"] for u in USERS) + (
+        PLATFORM_ADMIN_EMAIL,
+        ACCREDITATION_REVIEWER_EMAIL,
+    )
 
     async with session_for_system() as db:
         await db.execute(
@@ -218,12 +229,41 @@ async def main() -> None:
         )
     print(f"  ✓ {PLATFORM_ADMIN_EMAIL} ({admin_result.user_id}) — rol PLATFORM_ADMIN")
 
+    print("\nCreando cuenta de revisor de acreditación...")
+    reviewer_result = await auth_service.register(
+        first_name="Revisor",
+        last_name="Acreditación",
+        email=ACCREDITATION_REVIEWER_EMAIL,
+        password=PASSWORD,
+    )
+    async with session_for_system() as db:
+        reviewer_role = await members_repo.find_role_by_code(
+            db, "ACCREDITATION_REVIEWER"
+        )
+        if reviewer_role is None:
+            raise RuntimeError("No existe el rol de sistema ACCREDITATION_REVIEWER")
+        await db.execute(
+            text(
+                "insert into public.platform_admins (user_id, role_id) "
+                "values (:user_id, :role_id)"
+            ),
+            {
+                "user_id": str(reviewer_result.user_id),
+                "role_id": str(reviewer_role.id),
+            },
+        )
+    print(
+        f"  ✓ {ACCREDITATION_REVIEWER_EMAIL} ({reviewer_result.user_id}) "
+        "— rol ACCREDITATION_REVIEWER"
+    )
+
     print("\n" + "=" * 70)
     print("Listo. Contraseña para todas las cuentas:", PASSWORD)
     print("=" * 70)
     for u in USERS:
         print(f"  {u['email']}")
     print(f"  {PLATFORM_ADMIN_EMAIL} (backoffice, sin organización)")
+    print(f"  {ACCREDITATION_REVIEWER_EMAIL} (backoffice, sin organización)")
     print("\nTransportes Alfa  → publicada, pública, comprador+proveedor")
     print("Minera Beta       → activa, solo registrados, comprador")
     print("Ingeniería del Sur→ EN BORRADOR a propósito (perfil incompleto)")

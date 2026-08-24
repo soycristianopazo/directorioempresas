@@ -57,12 +57,35 @@ api.interceptors.request.use((config) => {
  * ese caso la sesión de verdad terminó y hay que mandar a login, no reintentar
  * para siempre.
  */
+/**
+ * FastAPI/Pydantic manda `detail` como un array de objetos de validación
+ * (`{type, loc, msg, ...}`) en un 422, no como string — a diferencia de
+ * cualquier error de negocio (`HTTPException(detail="...")`), que siempre es
+ * texto. Cada pantalla de la app lee `error.response?.data?.detail` como si
+ * fuera texto (`{formError}`, `toast.error(...)`); pasarle el array crudo
+ * revienta React con "Objects are not valid as a React child". Normalizar
+ * acá, una vez, es más seguro que auditar cada uno de esos call sites.
+ */
+function normalizeErrorDetail(data) {
+  if (!data || !Array.isArray(data.detail)) return;
+  data.detail = data.detail
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      const field = Array.isArray(item?.loc) ? item.loc.filter((p) => p !== 'body').join('.') : null;
+      const msg = item?.msg || 'Dato inválido';
+      return field ? `${field}: ${msg}` : msg;
+    })
+    .join('; ');
+}
+
 let refreshPromise = null;
 
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const { config, response } = error;
+
+    normalizeErrorDetail(response?.data);
 
     if (response?.status !== 401 || config._retry || config.url === '/auth/refresh') {
       return Promise.reject(error);
