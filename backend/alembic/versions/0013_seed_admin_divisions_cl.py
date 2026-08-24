@@ -24,7 +24,9 @@ down_revision = "0012"
 branch_labels = None
 depends_on = None
 
-SQL_FILE = Path(__file__).resolve().parent.parent / "sql" / "0013_seed_admin_divisions_cl.sql"
+SQL_FILE = (
+    Path(__file__).resolve().parent.parent / "sql" / "0013_seed_admin_divisions_cl.sql"
+)
 
 
 def upgrade() -> None:

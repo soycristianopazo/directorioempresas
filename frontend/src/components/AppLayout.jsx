@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Building2, LayoutDashboard, Users } from 'lucide-react';
+import { Award, Building2, LayoutDashboard, MapPinned, Package, Users } from 'lucide-react';
 import { OrganizationSwitcher } from '@/components/OrganizationSwitcher';
 import { UserMenu } from '@/components/UserMenu';
 import { cn } from '@/lib/utils';
@@ -7,8 +7,18 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { to: '/dashboard', label: 'Panel', icon: LayoutDashboard },
   { to: '/empresa', label: 'Mi empresa', icon: Building2 },
+  { to: '/empresa/cobertura', label: 'Cobertura', icon: MapPinned },
+  { to: '/empresa/catalogo', label: 'Catálogo', icon: Package },
+  { to: '/empresa/credenciales', label: 'Credenciales', icon: Award },
   { to: '/empresa/equipo', label: 'Equipo', icon: Users },
 ];
+
+function isNavItemActive(itemPath, currentPath) {
+  if (currentPath === itemPath) return true;
+  // /empresa es prefijo de todas las subrutas — solo las hojas (catálogo,
+  // cobertura, etc.) heredan el resaltado de sus propias subpáginas.
+  return itemPath !== '/empresa' && currentPath.startsWith(`${itemPath}/`);
+}
 
 export function AppLayout() {
   const { pathname: currentPath } = useLocation();
@@ -30,7 +40,7 @@ export function AppLayout() {
                 to={item.to}
                 className={cn(
                   'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                  currentPath === item.to && 'bg-accent text-accent-foreground',
+                  isNavItemActive(item.to, currentPath) && 'bg-accent text-accent-foreground',
                 )}
               >
                 <item.icon className="size-4" />

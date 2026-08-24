@@ -36,6 +36,16 @@
 | `0017_seed_attributes.sql` | Atributos de ejemplo para las 8 categorías prioritarias |
 | `0018_taxonomy_rls_helpers.sql` | `app.has_platform_permission(perm)` — permisos de plataforma sin organización |
 | `0019_taxonomy_rls_policies.sql` | RLS de las tablas de 0011-0016: lectura pública, escritura solo `platform.manage_taxonomy` |
+| `0020_organization_profile.sql` | `organization_locations`, `organization_contacts`, `organization_media`, `organization_settings` |
+| `0021_organization_industries_territories.sql` | `organization_industries`, `organization_territories` — industrias/cobertura declaradas por la propia empresa |
+| `0022_supplier_offerings.sql` | ENUMs de oferta + `supplier_offerings`, `offering_taxonomy_nodes`, `offering_industries`, `offering_territories`, `offering_pricing` — el núcleo del catálogo |
+| `0023_offering_media_and_documents.sql` | `offering_media`, `offering_documents` |
+| `0024_offering_attribute_values.sql` | `offering_attribute_values`, `offering_attribute_option_values` + trigger `app.validate_offering_attribute_value()` |
+| `0025_certifications.sql` | `certification_types` (con seed de 6 tipos) + `organization_certifications` |
+| `0026_case_studies.sql` | `client_references`, `case_studies`, `case_study_taxonomy_nodes`, `case_study_media` |
+| `0027_completion_pct.sql` | `app.compute_completion_pct(organization_id)` — porcentaje de completitud del perfil |
+| `0028_fase3_rls_helpers.sql` | `app.can_view_organization(org)`, `app.can_view_offering(offering)` — helpers de visibilidad reutilizados por ~20 policies |
+| `0029_fase3_rls_policies.sql` | RLS de todas las tablas de 0020-0026 |
 
 Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió contra la base real — se agrega una nueva. (Durante el desarrollo activo de una fase, mientras nada se ha compartido/aplicado en otro entorno, sí se corrige el archivo en el lugar y se reaplica — ver el historial de 0012 como ejemplo real de esto.)
 
@@ -91,6 +101,32 @@ Forward-only. **Nunca editar una migración ya aplicada** una vez que corrió co
 
 **`attribute_definitions` / `attribute_options` / `taxonomy_node_attributes`** — EAV tipado. `taxonomy_node_attributes.is_inherited=true` propaga el atributo a todos los descendientes del nodo — resuelto por la vista `v_effective_node_attributes` (herencia por `path`, la definición más específica gana sobre la heredada).
 
+### Perfil extendido y catálogo de oferta (fase 3)
+
+**`organization_locations` / `organization_contacts`**  — Sedes y contactos de la empresa. Desactivación vía `is_active=false`, no `DELETE` real (mismo criterio que las jerarquías, aunque estas no son datos de gobernanza append-only — es simplemente para no romper referencias históricas).
+
+**`organization_media`** — Logo/banner de la organización. `LOGO`/`BANNER` son singleton por organización: subir uno nuevo reemplaza el anterior (borra la fila y el objeto de Storage previos).
+
+**`organization_settings`** — Fila 1:1 creada automáticamente por `services.organizations.create_organization()` al dar de alta la empresa, no por trigger.
+
+**`organization_industries` / `organization_territories`** — Industrias que la empresa dice atender y cobertura territorial que declara, independientes de la taxonomía/industrias de plataforma (fase 2) pero referenciándolas por FK.
+
+**`supplier_offerings`** — El producto/servicio en sí. `status ∈ {DRAFT, ACTIVE, PAUSED, ARCHIVED}`; la transición DRAFT→ACTIVE (`publish_offering`) exige `short_description` y al menos un nodo de taxonomía asignado, validado en `services/offerings.py`, no en un CHECK de SQL.
+
+**`offering_taxonomy_nodes` / `offering_industries` / `offering_territories`** — Clasificación por oferta: QUÉ es (taxonomía) y A QUIÉN sirve (industria), reutilizando la misma clasificación dual-eje de fase 2 pero a nivel de oferta individual en lugar de organización completa. `offering_taxonomy_nodes.is_primary` determina qué nodo gobierna los atributos dinámicos efectivos de esa oferta.
+
+**`offering_pricing`** — 1:1 con la oferta. `price_type ∈ {FIXED, FROM, RANGE, ON_REQUEST}`; dinero siempre `(amount, currency_code)` según la convención general.
+
+**`offering_media` / `offering_documents`** — Fotos (bucket público `org-media`) y fichas técnicas PDF (bucket privado `org-documents`, servido vía URL firmada de 1 hora). Relación pura, sin gobernanza append-only: `DELETE` real al quitar una foto o documento.
+
+**`offering_attribute_values` / `offering_attribute_option_values`** — EAV tipado por oferta, valores contra las `attribute_definitions` de fase 2 heredadas por su nodo de taxonomía primario. Un CHECK (`num_nonnulls`) exige que a lo más un slot de valor esté poblado; el trigger `app.validate_offering_attribute_value()` valida además que el slot poblado coincida con el `data_type` de la definición — algo que un CHECK plano no puede expresar porque necesita un JOIN.
+
+**`certification_types`** (catálogo, seed de 6) **/ `organization_certifications`** — Certificaciones autodeclaradas por la empresa (NCh, ISO, OS10, …). Sin repositorio de documentos versionado todavía: eso es la acreditación completa de una fase posterior — aquí solo se guarda el dato declarado (`certificate_number`, fechas, `verification_status` por defecto sin verificar).
+
+**`client_references` / `case_studies` / `case_study_taxonomy_nodes` / `case_study_media`** — Historial comercial autodeclarado: a quién le han vendido y casos de éxito concretos, con fotos y etiquetado de taxonomía propio (sin `is_primary`, a diferencia de `offering_taxonomy_nodes` — un caso de éxito puede tocar varias categorías por igual).
+
+**`app.compute_completion_pct(organization_id)`** — No es una tabla sino una función que resume cuánto del perfil está lleno; se invoca desde `services/completion.py::recompute_completion_pct()` tras cualquier mutación relevante (perfil, catálogo, credenciales) y escribe el resultado en `organizations.completion_pct`. Requiere un `flush()` explícito antes de leer vía SQL crudo en la misma transacción — `SessionLocal` corre con `autoflush=False` en todo el proyecto (`backend/app/db/session.py`), así que una mutación ORM pendiente no es visible todavía para una consulta `text()` en la misma sesión sin ese flush.
+
 ### Observabilidad
 
 **`audit_logs`** — Inmutable: `REVOKE UPDATE, DELETE` para `app_user`.
@@ -113,6 +149,10 @@ los RPCs de antes:
 | `organizations.create_organization` | Organización + capacidades + RUT + membresía + rol de dueño, en una transacción |
 | `team.invite_member` / `team.accept_invitation` | Invitaciones por hash de token |
 | `taxonomy.create_taxonomy_node` / `create_industry` / `create_attribute_definition` / `link_attribute_to_node` | Administración de taxonomía — exige `platform.manage_taxonomy`, verificado con `app.has_platform_permission()` **antes** de mutar |
+| `organization_profile.*` | Ubicaciones, contactos, media, industrias/territorios de la empresa |
+| `offerings.*` | CRUD del catálogo — `offering.write`/`offering.publish`/`offering.delete` distinguidos por acción específica, no solo por RLS |
+| `credentials.*` | Certificaciones, referencias de clientes, casos de éxito |
+| `completion.recompute_completion_pct` | Recalcula y persiste `organizations.completion_pct` tras cualquier mutación de perfil/catálogo/credenciales |
 
 Todas ellas verifican el permiso ANTES de mutar (no dejan que RLS bloquee el
 `UPDATE`/`INSERT` y lo detecten por sus efectos) — ver el comentario en
@@ -137,7 +177,22 @@ node scripts/db-setup-app-role.mjs
 
 # Datos de prueba (reutiliza los servicios de la aplicación, no INSERTs a mano)
 cd backend && python seed.py
+
+# Crear los buckets de Supabase Storage (idempotente)
+node scripts/storage-setup-buckets.mjs
 ```
+
+**Storage (fase 3):** dos buckets — `org-media` (público, 8 MB, imágenes) para
+logos/fotos, `org-documents` (privado, 20 MB, PDF) para fichas técnicas,
+servido vía URL firmada de 1 hora. El backend habla directo con la Storage
+REST API vía `httpx` (`backend/app/core/storage.py`), sin el SDK
+`supabase-py` — mismo criterio que el resto del proyecto: el backend es el
+único intermediario de confianza, el `service_role` nunca se expone al
+cliente. Gotcha real encontrado durante la implementación: la clave de este
+proyecto usa el formato nuevo `sb_secret_...` (token opaco, no JWT) — la
+Storage API exige **ambos** headers `Authorization: Bearer` y `apikey` con el
+mismo valor; falta uno y el error es el engañoso `"Invalid Compact JWS"`, que
+no apunta a la causa real.
 
 No hay generación de tipos (`db:types`) ni suite pgTAP en este stack: los
 modelos SQLAlchemy en `backend/app/models/` son el equivalente tipado, y se

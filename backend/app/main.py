@@ -18,6 +18,10 @@ from fastapi.responses import JSONResponse
 from app.api.v1.admin_taxonomy import industries_router as admin_industries_router
 from app.api.v1.admin_taxonomy import router as admin_taxonomy_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.credentials import reference_router as certification_types_router
+from app.api.v1.credentials import router as credentials_router
+from app.api.v1.offerings import router as offerings_router
+from app.api.v1.organization_profile import router as organization_profile_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.reference import router as reference_router
 from app.api.v1.taxonomy import industries_router as industries_router
@@ -64,6 +68,10 @@ app.include_router(taxonomy_router, prefix="/api")
 app.include_router(industries_router, prefix="/api")
 app.include_router(admin_taxonomy_router, prefix="/api")
 app.include_router(admin_industries_router, prefix="/api")
+app.include_router(organization_profile_router, prefix="/api")
+app.include_router(offerings_router, prefix="/api")
+app.include_router(credentials_router, prefix="/api")
+app.include_router(certification_types_router, prefix="/api")
 
 
 @app.exception_handler(Exception)

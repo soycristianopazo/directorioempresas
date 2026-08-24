@@ -22,6 +22,7 @@ class AttributeOptionIn(BaseModel):
 
 
 class AttributeOptionOut(BaseModel):
+    id: UUID
     value: str
     label: str
 

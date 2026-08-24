@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ProfileCompletion } from '@/components/ProfileCompletion';
 import { cn } from '@/lib/utils';
 
 const STATUS_LABEL = { DRAFT: 'Borrador', ACTIVE: 'Publicado', SUSPENDED: 'Suspendido', ARCHIVED: 'Archivado' };
@@ -73,25 +74,9 @@ export default function DashboardPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold tabular-nums">{activeOrg.completion_pct}%</span>
-            <span className="text-sm text-muted-foreground">completado</span>
-          </div>
-          <div
-            className="h-2 w-full overflow-hidden rounded-full bg-secondary"
-            role="progressbar"
-            aria-valuenow={activeOrg.completion_pct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${activeOrg.completion_pct}%` }}
-            />
-          </div>
+          <ProfileCompletion pct={activeOrg.completion_pct} />
           <p className="text-sm text-muted-foreground">
-            El cálculo detallado por secciones —catálogo, cobertura, experiencia y acreditación—
-            se activa en las próximas fases.
+            Suma ubicaciones, cobertura, catálogo publicado y credenciales para subir el porcentaje.
           </p>
         </CardContent>
       </Card>
@@ -108,8 +93,9 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <NextStep label="Completar datos de la empresa" to="/empresa" />
-              <NextStep label="Publicar productos y servicios" phase="Próxima fase" />
-              <NextStep label="Definir cobertura territorial" phase="Próxima fase" />
+              <NextStep label="Publicar productos y servicios" to="/empresa/catalogo" />
+              <NextStep label="Definir cobertura territorial" to="/empresa/cobertura" />
+              <NextStep label="Certificaciones y casos de éxito" to="/empresa/credenciales" />
               <NextStep label="Iniciar acreditación" phase="Próxima fase" />
             </CardContent>
           </Card>

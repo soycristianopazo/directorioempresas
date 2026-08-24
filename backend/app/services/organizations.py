@@ -17,6 +17,7 @@ from app.core.rut import format_rut, is_valid_rut
 from app.db.rls import session_for_system, session_for_user
 from app.models.user import Profile
 from app.repositories import members as members_repo
+from app.repositories import organization_profile as profile_repo
 from app.repositories import organizations as orgs_repo
 
 
@@ -84,6 +85,8 @@ async def create_organization(
         await members_repo.assign_role(
             db, member_id=member.id, role_id=owner_role.id, assigned_by=created_by
         )
+
+        await profile_repo.create_default_settings(db, org.id)
 
         organization_id = org.id
 

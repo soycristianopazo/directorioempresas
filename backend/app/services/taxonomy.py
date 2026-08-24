@@ -134,7 +134,8 @@ async def get_effective_attributes_for_node(
                 "is_required": row.is_required,
                 "is_direct": row.is_direct,
                 "options": [
-                    {"value": opt.value, "label": opt.label} for opt in options
+                    {"id": opt.id, "value": opt.value, "label": opt.label}
+                    for opt in options
                 ],
             }
         )

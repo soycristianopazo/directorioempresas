@@ -20,11 +20,13 @@ from pathlib import Path
 from alembic import op
 
 revision = "0009"
-down_revision = '0008'
+down_revision = "0008"
 branch_labels = None
 depends_on = None
 
-SQL_FILE = Path(__file__).resolve().parent.parent / "sql" / "0009_seed_roles_permissions.sql"
+SQL_FILE = (
+    Path(__file__).resolve().parent.parent / "sql" / "0009_seed_roles_permissions.sql"
+)
 
 
 def upgrade() -> None:

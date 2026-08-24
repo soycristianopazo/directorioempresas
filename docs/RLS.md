@@ -39,6 +39,8 @@
 | `app.viewer_has_capability(cap)` | `0007` | `boolean` | ¿Alguna org del usuario tiene esta capacidad? |
 | `app.can_view_with_visibility(org, vis)` | `0007` | `boolean` | Visibilidad graduada |
 | `app.maintain_hierarchy_path()` | `0012` | trigger | Calcula `level`/`path` (ltree) en `admin_divisions`/`taxonomy_nodes`/`industries` |
+| `app.can_view_organization(org)` | `0028` | `boolean` | Pública si `ACTIVE`+visible, o miembro, o admin de plataforma — centraliza la lógica de visibilidad reutilizada por ~15 policies de perfil extendido |
+| `app.can_view_offering(offering)` | `0028` | `boolean` | Igual que arriba pero a nivel de oferta individual, resolviendo su organización dueña |
 
 El schema `app` no se expone directamente a ningún cliente: el backend conecta como `app_user`, que tiene `USAGE` sobre `app` pero el frontend nunca ve SQL — todo pasa por las rutas de FastAPI.
 
@@ -65,6 +67,13 @@ El schema `app` no se expone directamente a ningún cliente: el backend conecta 
 | `taxonomy_nodes` y relacionadas (`translations`, `synonyms`, `external_mappings`) | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
 | `industries` y `industry_translations` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
 | `attribute_definitions` / `attribute_options` / `taxonomy_node_attributes` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura |
+| `organization_locations` / `organization_contacts` / `organization_media` / `organization_settings` | Según `can_view_organization` | Lectura si es miembro | `organization.update` → escritura | Total |
+| `organization_industries` / `organization_territories` | Según `can_view_organization` | Lectura si es miembro | `organization.update` → escritura | Total |
+| `supplier_offerings` y relacionadas (`taxonomy_nodes`, `industries`, `territories`, `pricing`, `media`, `documents`, `attribute_values`) | Según `can_view_offering` (solo ofertas `ACTIVE` de orgs visibles) | Lectura si es miembro de la org dueña | `offering.read`/`write`/`publish`/`delete` según la acción — ver nota abajo | Total |
+| `certification_types` | **Lectura total** | Lectura total | — | `platform.manage_taxonomy` → escritura (catálogo cerrado, mismo criterio que taxonomía) |
+| `organization_certifications` / `client_references` / `case_studies` y relacionadas | Según `can_view_organization` (y `is_public` en la fila) | Lectura si es miembro | `organization.update` → escritura | Total |
+
+**Nota sobre `supplier_offerings`:** RLS acepta cualquiera de `offering.read`/`write`/`publish`/`delete` como base para tocar la fila — es un backstop grueso. La distinción fina de CUÁL permiso hace falta para CADA mutación específica (crear/editar borrador → `write`; DRAFT→ACTIVE → `publish`, con su propia validación de completitud; borrado lógico → `delete`) vive en `services/offerings.py`, no en la policy — mismo patrón que el resto del proyecto: RLS es la defensa 1, el servicio decide el detalle.
 
 Las tablas de referencia/taxonomía (fase 2) son deliberadamente públicas por diseño incluso para `anon`: un selector de comuna o el árbol de categorías no tiene nada que ocultar, y exponerlo permite que la landing y cualquier página pública futura lo consuman sin autenticación.
 
@@ -85,6 +94,8 @@ Las tablas de referencia/taxonomía (fase 2) son deliberadamente públicas por d
 **Ninguna tabla usa `FORCE ROW LEVEL SECURITY`.** `ENABLE` alcanza porque `app_user` nunca es dueño de una tabla (las crea `postgres` vía Alembic). `FORCE` rompería la vía de escape que los helpers `SECURITY DEFINER` necesitan para no recursionar contra sus propias policies — probado y reproducido una vez (`StatementTooComplexError: stack depth limit exceeded`), documentado en detalle en `0010_hardening.sql`. No reintroducir esto "por seguridad extra": es exactamente el bug ya resuelto.
 
 **Los datos de referencia/taxonomía son de lectura pública por diseño**, con escritura acotada a `platform.manage_taxonomy`, verificado en dos capas: RLS (`app.has_platform_permission()`) y el servicio Python (mismo chequeo, antes de mutar, para evitar que RLS bloquee un `UPDATE` ya en curso).
+
+**Supabase Storage no tiene RLS de Postgres propio en este diseño — el control de acceso vive en el backend.** El `service_role` de Storage solo lo tiene el backend (nunca el cliente); las fotos de un perfil se sirven por URL pública del bucket `org-media`, y los documentos técnicos por URL firmada de corta duración (`org-documents`, 1 hora) generada por `services/offerings.py` **después** de que el mismo chequeo de `can_view_offering()`/permiso ya pasó a nivel de API. Es el mismo principio que el resto del proyecto — RLS/permiso primero, el recurso después — aplicado a un sistema que no tiene su propio RLS.
 
 ---
 

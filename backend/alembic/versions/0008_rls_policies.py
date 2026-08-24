@@ -20,7 +20,7 @@ from pathlib import Path
 from alembic import op
 
 revision = "0008"
-down_revision = '0007'
+down_revision = "0007"
 branch_labels = None
 depends_on = None
 

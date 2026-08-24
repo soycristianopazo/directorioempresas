@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     # Base pública para URLs canónicas y sitemap del HTML indexable.
     public_base_url: str = "http://localhost:8000"
 
+    # ── Storage (Supabase Storage) ──────────────────────────────────────────
+    #
+    # El backend es el único que habla con la API de Storage — mismo criterio
+    # que con la base de datos: el cliente nunca ve la service_role key, sube
+    # el archivo vía multipart a un endpoint de FastAPI, y el backend hace la
+    # llamada server-to-server después de validar el permiso correspondiente
+    # (organization.update / offering.write). Ver app/core/storage.py.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+
     @field_validator("database_url", "migration_url")
     @classmethod
     def _validate_dsn(cls, value: str | None) -> str | None:

@@ -10,6 +10,11 @@ import RegisterPage from '@/pages/RegisterPage';
 import OnboardingPage from '@/pages/OnboardingPage';
 import DashboardPage from '@/pages/DashboardPage';
 import CompanyPage from '@/pages/CompanyPage';
+import CompanyLocationsPage from '@/pages/CompanyLocationsPage';
+import CompanyCoveragePage from '@/pages/CompanyCoveragePage';
+import CatalogPage from '@/pages/CatalogPage';
+import OfferingDetailPage from '@/pages/OfferingDetailPage';
+import CredentialsPage from '@/pages/CredentialsPage';
 import TeamPage from '@/pages/TeamPage';
 import InvitationPage from '@/pages/InvitationPage';
 import AdminTaxonomyPage from '@/pages/admin/AdminTaxonomyPage';
@@ -41,6 +46,11 @@ export const router = createBrowserRouter([
             children: [
               { path: '/dashboard', element: <DashboardPage /> },
               { path: '/empresa', element: <CompanyPage /> },
+              { path: '/empresa/ubicaciones', element: <CompanyLocationsPage /> },
+              { path: '/empresa/cobertura', element: <CompanyCoveragePage /> },
+              { path: '/empresa/catalogo', element: <CatalogPage /> },
+              { path: '/empresa/catalogo/:offeringId', element: <OfferingDetailPage /> },
+              { path: '/empresa/credenciales', element: <CredentialsPage /> },
               { path: '/empresa/equipo', element: <TeamPage /> },
             ],
           },
