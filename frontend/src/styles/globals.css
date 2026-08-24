@@ -6,73 +6,101 @@
   Sistema visual B2B: corporativo, denso en información, baja carga cognitiva.
   Tokens en HSL sin la función hsl() envuelta, porque así los espera Tailwind
   cuando se referencian como `hsl(var(--token))` (convención shadcn/ui).
+
+  Paleta derivada del logo (src/assets/logo.png), extraída por color exacto
+  del PNG, no aproximada a ojo:
+    #1c947e teal   → marca principal, CTAs, foco
+    #ccd938 lima   → acento vivo, para marketing/landing
+    #728d1d oliva  → acento profundo, para marketing/landing
+    #cbe5f1 celeste→ acento suave, para marketing/landing
+
+  Los tokens semánticos (--primary, --accent, etc.) son los que consumen los
+  componentes de UI (botones, inputs, tarjetas) y se mantienen sobrios porque
+  esas pantallas son de trabajo (equipo, formularios), no publicitarias. Los
+  tokens --brand-* son la paleta completa del logo, sin domesticar, para la
+  landing y cualquier superficie de marketing.
 */
 
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 222 20% 12%;
+    --foreground: 170 25% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 20% 12%;
+    --card-foreground: 170 25% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 20% 12%;
+    --popover-foreground: 170 25% 12%;
 
-    --primary: 253 65% 45%;
+    --primary: 169 68% 30%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 20% 12%;
+    --secondary: 160 14% 96%;
+    --secondary-foreground: 170 25% 14%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 160 14% 96%;
+    --muted-foreground: 170 8% 45%;
 
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 20% 12%;
+    --accent: 160 14% 94%;
+    --accent-foreground: 170 25% 14%;
 
     --destructive: 4 78% 52%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 253 65% 45%;
+    --border: 160 13% 90%;
+    --input: 160 13% 90%;
+    --ring: 169 68% 30%;
 
     --radius: 0.75rem;
 
     --font-sans:
-      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-      sans-serif;
+      'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, sans-serif;
+
+    /* Paleta cruda del logo — uso libre en marketing (hsl(var(--brand-x) / <alpha>)). */
+    --brand-teal: 169 68% 35%;
+    --brand-teal-dark: 170 72% 20%;
+    --brand-teal-light: 168 55% 46%;
+    --brand-lime: 65 68% 54%;
+    --brand-olive: 74 66% 33%;
+    --brand-sky: 199 58% 87%;
   }
 
   .dark {
-    --background: 222 24% 8%;
-    --foreground: 220 14% 92%;
+    --background: 172 28% 7%;
+    --foreground: 160 14% 92%;
 
-    --card: 222 22% 11%;
-    --card-foreground: 220 14% 92%;
+    --card: 172 24% 10%;
+    --card-foreground: 160 14% 92%;
 
-    --popover: 222 22% 11%;
-    --popover-foreground: 220 14% 92%;
+    --popover: 172 24% 10%;
+    --popover-foreground: 160 14% 92%;
 
-    --primary: 253 70% 62%;
-    --primary-foreground: 222 24% 8%;
+    --primary: 168 55% 52%;
+    --primary-foreground: 172 28% 8%;
 
-    --secondary: 222 18% 16%;
-    --secondary-foreground: 220 14% 92%;
+    --secondary: 172 16% 15%;
+    --secondary-foreground: 160 14% 92%;
 
-    --muted: 222 18% 16%;
-    --muted-foreground: 220 9% 65%;
+    --muted: 172 16% 15%;
+    --muted-foreground: 160 9% 65%;
 
-    --accent: 222 18% 16%;
-    --accent-foreground: 220 14% 92%;
+    --accent: 172 16% 17%;
+    --accent-foreground: 160 14% 92%;
 
     --destructive: 4 70% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 222 18% 18%;
-    --input: 222 18% 18%;
-    --ring: 253 70% 62%;
+    --border: 172 16% 18%;
+    --input: 172 16% 18%;
+    --ring: 168 55% 52%;
+
+    --brand-teal: 168 55% 46%;
+    --brand-teal-dark: 169 60% 28%;
+    --brand-teal-light: 168 50% 58%;
+    --brand-lime: 65 60% 58%;
+    --brand-olive: 74 50% 42%;
+    --brand-sky: 199 45% 30%;
   }
 
   * {
