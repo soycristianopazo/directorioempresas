@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+from app.core.file_validation import matches_declared_image_type
 from app.core.storage import StorageError, delete_object, public_url, upload_object
 from app.db.rls import session_for_user
 from app.repositories import organization_profile as profile_repo
@@ -214,6 +215,10 @@ async def upload_media(
         raise ProfileValidationError(f"Tipo de archivo no permitido: {content_type}")
     if len(content) > _MAX_IMAGE_BYTES:
         raise ProfileValidationError("El archivo supera el máximo de 8 MB")
+    if not matches_declared_image_type(content, content_type):
+        raise ProfileValidationError(
+            "El contenido del archivo no coincide con el tipo declarado"
+        )
 
     extension = _ALLOWED_IMAGE_TYPES[content_type]
     storage_path = f"{organization_id}/{media_type.lower()}/{uuid4()}.{extension}"

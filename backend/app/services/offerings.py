@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from app.core.file_validation import matches_declared_image_type, matches_pdf
 from app.core.storage import (
     StorageError,
     create_signed_url,
@@ -331,6 +332,10 @@ async def upload_media(
         raise OfferingValidationError(f"Tipo de archivo no permitido: {content_type}")
     if len(content) > _MAX_IMAGE_BYTES:
         raise OfferingValidationError("El archivo supera el máximo de 8 MB")
+    if not matches_declared_image_type(content, content_type):
+        raise OfferingValidationError(
+            "El contenido del archivo no coincide con el tipo declarado"
+        )
 
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_WRITE)
@@ -408,6 +413,10 @@ async def upload_document(
         raise OfferingValidationError("Solo se aceptan documentos PDF por ahora")
     if len(content) > _MAX_DOCUMENT_BYTES:
         raise OfferingValidationError("El archivo supera el máximo de 20 MB")
+    if not matches_pdf(content):
+        raise OfferingValidationError(
+            "El contenido del archivo no coincide con un PDF válido"
+        )
 
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_WRITE)

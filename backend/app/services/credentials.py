@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID, uuid4
 
+from app.core.file_validation import matches_declared_image_type
 from app.core.storage import StorageError, delete_object, public_url, upload_object
 from app.db.rls import session_for_user
 from app.repositories import credentials as credentials_repo
@@ -248,6 +249,10 @@ async def upload_case_study_media(
         )
     if len(content) > _MAX_IMAGE_BYTES:
         raise CredentialsValidationError("El archivo supera el máximo de 8 MB")
+    if not matches_declared_image_type(content, content_type):
+        raise CredentialsValidationError(
+            "El contenido del archivo no coincide con el tipo declarado"
+        )
 
     async with session_for_user(user_id) as db:
         await _require(db, organization_id)

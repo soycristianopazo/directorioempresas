@@ -56,10 +56,10 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {activeOrg.status !== 'ACTIVE' && (
+        {activeOrg.completion_pct < 100 && (
           <Button asChild>
-            <Link to="/empresa">
-              Completar perfil
+            <Link to={isSupplier ? '/onboarding/2' : '/empresa'}>
+              Continuar completando el perfil
               <ArrowRight className="size-4" />
             </Link>
           </Button>

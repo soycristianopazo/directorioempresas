@@ -84,7 +84,7 @@ export default function OnboardingPage() {
       });
       await refresh();
       await switchOrganization(organizationId);
-      navigate('/dashboard', { replace: true });
+      navigate('/onboarding/2', { replace: true });
     } catch (error) {
       setFormError(error.response?.data?.detail || 'No se pudo crear la organización');
       toast.error('No se pudo crear la organización');

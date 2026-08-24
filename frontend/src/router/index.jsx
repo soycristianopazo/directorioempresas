@@ -8,6 +8,7 @@ import HomePage from '@/pages/HomePage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import OnboardingPage from '@/pages/OnboardingPage';
+import OnboardingWizardPage from '@/pages/OnboardingWizardPage';
 import DashboardPage from '@/pages/DashboardPage';
 import CompanyPage from '@/pages/CompanyPage';
 import CompanyLocationsPage from '@/pages/CompanyLocationsPage';
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
       {
         element: <RequireOrg />,
         children: [
+          { path: '/onboarding/:step', element: <OnboardingWizardPage /> },
           {
             element: <AppLayout />,
             children: [
