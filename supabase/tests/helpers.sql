@@ -6,15 +6,30 @@
 -- La clave de probar RLS es suplantar identidades correctamente: hay que
 -- cambiar de rol (authenticated / anon) Y de claims JWT. Cambiar solo el rol
 -- deja auth.uid() en null y las pruebas pasan por el motivo equivocado.
+--
+-- DOS SUTILEZAS QUE CUESTAN UNA TARDE SI NO SE SABEN
+-- ---------------------------------------------------------------------------
+-- 1. `authenticate_as` NO puede ser SECURITY DEFINER. PostgreSQL guarda y
+--    restaura el rol al salir de una función SECURITY DEFINER, así que el
+--    `set role` se desharía justo al retornar. Por eso la lectura de
+--    auth.users (que `authenticated` no puede hacer) se delega a
+--    `tests.get_email`, que sí es SECURITY DEFINER.
+--
+-- 2. Una vez que la sesión pasa a rol `authenticated`, deja de tener USAGE
+--    sobre el schema `tests`. Sin los GRANT del final, la segunda llamada a
+--    un helper falla con "permission denied for schema tests".
 -- ============================================================================
 
 create schema if not exists tests;
+grant usage on schema tests to anon, authenticated, service_role;
 
 
 -- Crea un usuario en auth.users (el trigger crea el profile).
 create or replace function tests.create_user(p_email text, p_id uuid default gen_random_uuid())
 returns uuid
 language plpgsql
+security definer
+set search_path = ''
 as $$
 begin
   insert into auth.users (
@@ -36,16 +51,27 @@ end;
 $$;
 
 
+-- Lectura de auth.users para los helpers. SECURITY DEFINER porque el rol
+-- `authenticated` no tiene acceso a esa tabla.
+create or replace function tests.get_email(p_user_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $$
+  select u.email::text from auth.users u where u.id = p_user_id;
+$$;
+
+
 -- Actúa como un usuario autenticado concreto.
+-- Sin SECURITY DEFINER a propósito: ver nota 1 de la cabecera.
 create or replace function tests.authenticate_as(p_user_id uuid)
 returns void
 language plpgsql
 as $$
 declare
-  v_email text;
+  v_email text := tests.get_email(p_user_id);
 begin
-  select email into v_email from auth.users where id = p_user_id;
-
   perform set_config('role', 'authenticated', true);
   perform set_config(
     'request.jwt.claims',
@@ -74,6 +100,8 @@ $$;
 
 
 -- Vuelve al rol privilegiado para preparar datos.
+-- Funciona porque session_user sigue siendo postgres: SET ROLE se autoriza
+-- contra el usuario de sesión, no contra el rol actual.
 create or replace function tests.clear_authentication()
 returns void
 language plpgsql
@@ -85,16 +113,6 @@ end;
 $$;
 
 
--- Cuenta filas visibles de una tabla bajo la identidad actual.
--- Es la primitiva de casi toda aserción de RLS: "¿cuántas filas ve X?".
-create or replace function tests.count_visible(p_table text, p_where text default 'true')
-returns bigint
-language plpgsql
-as $$
-declare
-  v_count bigint;
-begin
-  execute format('select count(*) from %s where %s', p_table, p_where) into v_count;
-  return v_count;
-end;
-$$;
+-- Ver nota 2 de la cabecera: sin esto, el primer cambio de rol deja
+-- inutilizables al resto de los helpers.
+grant execute on all functions in schema tests to anon, authenticated, service_role;

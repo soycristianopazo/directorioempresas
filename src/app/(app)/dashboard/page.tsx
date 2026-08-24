@@ -22,9 +22,7 @@ export default async function DashboardPage() {
     <div className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {org.trade_name ?? org.legal_name}
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{org.displayName}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge tone={org.status === 'ACTIVE' ? 'success' : 'warning'}>
               {org.status === 'ACTIVE' ? 'Perfil publicado' : 'Perfil en borrador'}
@@ -35,7 +33,7 @@ export default async function DashboardPage() {
               </Badge>
             ))}
             <span className="text-ink-500 text-xs">
-              Tu rol: {org.role_codes.join(', ') || 'sin rol asignado'}
+              Tu rol: {org.roleCodes.join(', ') || 'sin rol asignado'}
             </span>
           </div>
         </div>
@@ -56,20 +54,20 @@ export default async function DashboardPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold tabular-nums">{org.completion_pct}%</span>
+            <span className="text-3xl font-semibold tabular-nums">{org.completionPct}%</span>
             <span className="text-ink-500 text-sm">completado</span>
           </div>
           <div
             className="bg-ink-200 dark:bg-ink-800 h-2 w-full overflow-hidden rounded-full"
             role="progressbar"
-            aria-valuenow={org.completion_pct}
+            aria-valuenow={org.completionPct}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label="Completitud del perfil"
           >
             <div
               className="bg-brand-600 h-full rounded-full transition-[width]"
-              style={{ width: `${org.completion_pct}%` }}
+              style={{ width: `${org.completionPct}%` }}
             />
           </div>
           <p className="text-ink-500 text-sm">

@@ -52,9 +52,9 @@ export default async function ProfilePage() {
               key={membership.id}
               className="border-ink-200 dark:border-ink-800 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"
             >
-              <span className="font-medium">{membership.trade_name ?? membership.legal_name}</span>
+              <span className="font-medium">{membership.displayName}</span>
               <span className="text-ink-500 text-xs">
-                {membership.role_codes.join(' · ') || 'Sin rol'}
+                {membership.roleCodes.join(' · ') || 'Sin rol'}
               </span>
             </div>
           ))}

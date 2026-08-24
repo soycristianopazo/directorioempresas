@@ -16,7 +16,7 @@
 | `…0005_audit_and_events.sql` | `audit_logs` particionada e inmutable, `domain_events` (outbox) |
 | `…0006_rls_helpers.sql` | Funciones helper de RLS |
 | `…0007_rls_policies_identity.sql` | Policies del dominio D0 |
-| `…0008_seed_roles_permissions.sql` | Catálogo de 46 permisos y 14 roles de sistema |
+| `…0008_seed_roles_permissions.sql` | Catálogo de 45 permisos y 14 roles de sistema |
 | `…0009_organization_rpcs.sql` | `create_organization`, `accept_invitation`, `switch_organization`, `remove_member`, vista `v_my_organizations`, envoltorios públicos |
 
 Forward-only. **Nunca editar una migración ya aplicada**: se agrega una nueva.
@@ -54,7 +54,7 @@ Forward-only. **Nunca editar una migración ya aplicada**: se agrega una nueva.
 
 ### RBAC
 
-**`permissions`** — 46 permisos atómicos con formato `recurso.acción`.
+**`permissions`** — 45 permisos atómicos con formato `recurso.acción`.
 **Regla:** el código nunca compara nombres de rol. Chequea `has_permission(org, 'sourcing_event.award')`. Eso permite roles a medida por empresa sin tocar TypeScript.
 
 **`roles`** — 14 roles de sistema (4 de plataforma, 10 de organización).
@@ -101,13 +101,26 @@ npm run db:types
 
 `db reset` aplica las 9 migraciones y ejecuta `supabase/seed.sql` (4 usuarios y 2 organizaciones de prueba; contraseña `Password123`).
 
-Sin Docker, las migraciones se aplican a un proyecto Supabase hospedado:
+### Sin Docker, contra un proyecto hospedado
+
+Es el camino verificado en este proyecto. Requiere `SUPABASE_DB_URL` en
+`.env.local` (conexión directa, puerto 5432 — no el pooler en modo
+transaction).
 
 ```bash
-npx supabase link --project-ref <ref>
-npx supabase db push
+npx supabase db push --db-url "$SUPABASE_DB_URL" --include-all
 npm run db:types:remote
+npm run db:test:remote
 ```
+
+`db:types:remote` **no** usa `supabase gen types`: ese comando exige Docker
+incluso cuando se le pasa `--db-url`, y además ignora los ENUMs del schema
+`app`. En su lugar corre `scripts/db-gen-types.mjs`, que lee el catálogo de
+Postgres directamente.
+
+`db:test:remote` corre la suite pgTAP por conexión directa
+(`scripts/db-test-remote.mjs`), porque `supabase test db` solo funciona contra
+el stack local.
 
 ---
 
@@ -118,4 +131,4 @@ npm run db:types:remote
 3. `alter table … enable row level security;` **y sus policies**.
 4. Índice en `organization_id` y en toda columna que use una policy.
 5. Fila en la matriz de [RLS.md](RLS.md) y aserciones en `supabase/tests/`.
-6. `npm run db:types` para regenerar los tipos.
+6. `npm run db:types` (local) o `npm run db:types:remote` para regenerar los tipos.

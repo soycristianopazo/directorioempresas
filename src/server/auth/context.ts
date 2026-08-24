@@ -4,11 +4,11 @@ import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { Views } from '@/lib/supabase/database.types'
+import { toMemberships, type Membership } from '@/server/mappers/membership'
 
 export const ACTIVE_ORG_COOKIE = 'active_org'
 
-export type Membership = Views<'v_my_organizations'>
+export type { Membership }
 
 export interface SessionContext {
   userId: string
@@ -44,13 +44,13 @@ export const getSessionContext = cache(async (): Promise<SessionContext | null> 
     supabase.rpc('am_i_platform_admin'),
   ])
 
-  const list: Membership[] = membershipsResult.data ?? []
+  const memberships = toMemberships(membershipsResult.data)
 
   const cookieStore = await cookies()
   const requestedOrgId = cookieStore.get(ACTIVE_ORG_COOKIE)?.value
 
   // Revalidación: la cookie solo se respeta si corresponde a una membresía real.
-  const activeOrg = list.find((m) => m.id === requestedOrgId) ?? list[0] ?? null
+  const activeOrg = memberships.find((m) => m.id === requestedOrgId) ?? memberships[0] ?? null
 
   let permissions = new Set<string>()
   if (activeOrg) {
@@ -65,7 +65,7 @@ export const getSessionContext = cache(async (): Promise<SessionContext | null> 
   return {
     userId: user.id,
     email: user.email ?? '',
-    memberships: list,
+    memberships,
     activeOrg,
     permissions,
     isPlatformAdmin: adminResult.data === true,

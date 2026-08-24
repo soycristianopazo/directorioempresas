@@ -53,9 +53,7 @@ export function OrganizationSwitcher({
         )}
         aria-label="Cambiar de organización"
       >
-        <span className="truncate">
-          {active?.trade_name ?? active?.legal_name ?? 'Organización'}
-        </span>
+        <span className="truncate">{active?.displayName ?? 'Organización'}</span>
         <ChevronsUpDown className="ml-auto size-4 shrink-0 opacity-60" aria-hidden />
       </DropdownMenu.Trigger>
 
@@ -83,11 +81,9 @@ export function OrganizationSwitcher({
                 aria-hidden
               />
               <span className="min-w-0">
-                <span className="block truncate">
-                  {membership.trade_name ?? membership.legal_name}
-                </span>
+                <span className="block truncate">{membership.displayName}</span>
                 <span className="text-ink-500 block truncate text-xs">
-                  {membership.role_codes.join(' · ') || 'Sin rol'}
+                  {membership.roleCodes.join(' · ') || 'Sin rol'}
                 </span>
               </span>
             </DropdownMenu.Item>

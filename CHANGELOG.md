@@ -12,7 +12,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Validación de RUT chileno por módulo 11 **en la base**, como `CHECK`, más normalización automática al formato canónico.
 - `profiles` con alta automática desde `auth.users`. Sin `organization_id`: la pertenencia es N:N.
 - `organizations` con capacidades (`BUYER`/`SUPPLIER`), roles declarativos de negocio e identificadores tributarios multi-país.
-- RBAC completo: 46 permisos atómicos, 14 roles de sistema, roles a medida por organización, membresías con múltiples roles.
+- RBAC completo: 45 permisos atómicos, 14 roles de sistema, roles a medida por organización, membresías con múltiples roles.
 - Invitaciones al equipo con token hasheado (SHA-256); el token nunca se almacena en claro.
 - `audit_logs` particionada por mes e inmutable (revocación de UPDATE/DELETE incluso para `service_role`, más trigger).
 - `domain_events` como outbox transaccional para notificaciones, analítica e integraciones.
@@ -49,6 +49,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - **2026-08-23** · Dos taxonomías ortogonales: `taxonomy_nodes` (qué vendes) × `industries` (a qué industria sirves). Se descarta el árbol único del brief §7.
 - **2026-08-23** · MVP acotado a supply-side + discovery. RFQ, matching y cotizaciones pasan a V1.
 
-### Pendiente de verificación
+### Verificación
 
-- Las 9 migraciones y la suite pgTAP **no se han ejecutado todavía** contra una base real: el equipo de desarrollo aún no tiene Docker ni un proyecto Supabase enlazado. Typecheck, lint y build sí están verificados.
+Ejecutado contra un proyecto Supabase hospedado (PostgreSQL 17.6):
+
+- Las **9 migraciones aplican en limpio** sobre una base vacía, sin un solo error.
+- **42/42 aserciones pgTAP correctas**, incluida la identidad de "competidor" que confirma que una organización no ve absolutamente nada de otra.
+- Esquema resultante: 14 tablas, 39 policies, 45 permisos, 14 roles, 26 claves foráneas. **Cero tablas sin RLS.**
+- La base quedó sin datos de prueba: los tests corren dentro de `begin`/`rollback`.
+- Typecheck, lint, formato y build correctos contra los tipos generados desde el esquema real.
+
+Tres defectos que aparecieron solo al ejecutar:
+
+- Los helpers de prueba fallaban con `permission denied for schema tests` al suplantar identidades: al cambiar de rol, la sesión pierde USAGE sobre el schema `tests` y el SELECT sobre las tablas temporales. Resuelto con GRANTs explícitos.
+- `authenticate_as` no puede ser `SECURITY DEFINER`: PostgreSQL restaura el rol al salir de la función, deshaciendo el `set role` justo al retornar. La lectura de `auth.users` se delegó a un helper aparte.
+- `supabase gen types` exige Docker aunque se le pase `--db-url`. Se reemplazó por un generador propio que lee el catálogo de Postgres, y que además sí incluye los ENUMs del schema `app`.

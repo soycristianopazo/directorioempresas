@@ -70,6 +70,11 @@ select tests.clear_authentication();
 create temporary table t_ids as
   select id as alfa_id from public.organizations where legal_name = 'Transportes Alfa SpA';
 
+-- Las temporales las crea `postgres`. Sin este GRANT, al suplantar a un
+-- usuario la consulta falla con "permission denied for relation t_ids" y el
+-- test verde/rojo mediría privilegios, no RLS.
+grant select on t_ids to public;
+
 select is(
   (select count(*) from public.organization_members m
    join t_ids t on t.alfa_id = m.organization_id
@@ -110,6 +115,8 @@ select tests.clear_authentication();
 
 create temporary table t_beta as
   select id as beta_id from public.organizations where legal_name = 'Beta Minería Ltda';
+
+grant select on t_beta to public;
 
 
 -- Bruno entra a Alfa como VIEWER; diego entra a Alfa y a Beta.

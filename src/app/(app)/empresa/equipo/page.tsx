@@ -44,7 +44,7 @@ export default async function TeamPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Equipo</h1>
         <p className="text-ink-500 mt-1 text-sm">
-          Personas con acceso a {session.activeOrg.trade_name ?? session.activeOrg.legal_name}.
+          Personas con acceso a {session.activeOrg.displayName}.
         </p>
       </header>
 

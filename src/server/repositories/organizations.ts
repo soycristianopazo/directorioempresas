@@ -58,8 +58,8 @@ export async function create(params: CreateOrganizationParams): Promise<string> 
 
   const { data, error } = await supabase.rpc('create_organization', {
     p_legal_name: params.legalName,
-    p_trade_name: params.tradeName ?? null,
-    p_rut: params.rut ?? null,
+    p_trade_name: params.tradeName ?? undefined,
+    p_rut: params.rut ?? undefined,
     p_capabilities: params.capabilities,
     p_country_code: params.countryCode ?? 'CL',
   })
