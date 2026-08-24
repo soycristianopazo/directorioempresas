@@ -59,6 +59,17 @@ Ejecutado contra un proyecto Supabase hospedado (PostgreSQL 17.6):
 - La base quedó sin datos de prueba: los tests corren dentro de `begin`/`rollback`.
 - Typecheck, lint, formato y build correctos contra los tipos generados desde el esquema real.
 
+Recorrido manual completo de la aplicación contra ese mismo proyecto:
+
+- Alta de usuario → el trigger `on_auth_user_created` crea el perfil con `full_name` derivado de los metadatos.
+- Login → redirección encadenada a `/onboarding` porque el usuario no tiene organización.
+- El formulario rechaza un RUT con dígito verificador incorrecto (validación en cliente **y** en la base).
+- `create_organization` crea en una sola transacción: organización, ambas capacidades, RUT normalizado (`76.086.428-5` → `76086428-5`), slug derivado del nombre comercial, membresía y rol `ORG_OWNER`.
+- Panel, Mi empresa y Equipo renderizan con los permisos correctos; sin botón "Quitar" sobre uno mismo.
+- La invitación guarda **solo el SHA-256** del token; se verificó que el hash de la base coincide con el del enlace generado y que el token en claro no está almacenado.
+- `audit_logs` registró `organization.created` y **rechazó el DELETE** incluso ejecutado con la conexión directa de administración.
+- Los datos de prueba se eliminaron: el proyecto quedó en 0 usuarios, 0 organizaciones y 0 invitaciones. La fila de auditoría permanece, que es exactamente el comportamiento buscado.
+
 Tres defectos que aparecieron solo al ejecutar:
 
 - Los helpers de prueba fallaban con `permission denied for schema tests` al suplantar identidades: al cambiar de rol, la sesión pierde USAGE sobre el schema `tests` y el SELECT sobre las tablas temporales. Resuelto con GRANTs explícitos.
