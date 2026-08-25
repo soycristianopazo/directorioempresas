@@ -27,6 +27,15 @@ import MatchResultsPage from '@/pages/MatchResultsPage';
 import BuyerSearchPage from '@/pages/BuyerSearchPage';
 import ComparePage from '@/pages/ComparePage';
 import SupplierListsPage from '@/pages/SupplierListsPage';
+import EvaluationTemplatesPage from '@/pages/EvaluationTemplatesPage';
+import EvaluationCommitteePage from '@/pages/EvaluationCommitteePage';
+import EvaluationFormPage from '@/pages/EvaluationFormPage';
+import QuotationComparatorPage from '@/pages/QuotationComparatorPage';
+import NegotiationPanelPage from '@/pages/NegotiationPanelPage';
+import AwardWizardPage from '@/pages/AwardWizardPage';
+import AwardApprovalsPage from '@/pages/AwardApprovalsPage';
+import VendorListPage from '@/pages/VendorListPage';
+import SubscriptionPage from '@/pages/SubscriptionPage';
 import TeamPage from '@/pages/TeamPage';
 import InvitationPage from '@/pages/InvitationPage';
 import AdminTaxonomyPage from '@/pages/admin/AdminTaxonomyPage';
@@ -83,6 +92,30 @@ export const router = createBrowserRouter([
               { path: '/buscar', element: <BuyerSearchPage /> },
               { path: '/comparar', element: <ComparePage /> },
               { path: '/empresa/listas', element: <SupplierListsPage /> },
+              { path: '/empresa/evaluacion/plantillas', element: <EvaluationTemplatesPage /> },
+              {
+                path: '/empresa/sourcing/:eventId/comite',
+                element: <EvaluationCommitteePage />,
+              },
+              {
+                path: '/empresa/sourcing/:eventId/evaluar',
+                element: <EvaluationFormPage />,
+              },
+              {
+                path: '/empresa/sourcing/:eventId/comparador',
+                element: <QuotationComparatorPage />,
+              },
+              {
+                path: '/empresa/sourcing/:eventId/negociacion',
+                element: <NegotiationPanelPage />,
+              },
+              {
+                path: '/empresa/sourcing/:eventId/adjudicacion',
+                element: <AwardWizardPage />,
+              },
+              { path: '/empresa/aprobaciones', element: <AwardApprovalsPage /> },
+              { path: '/empresa/vendor-list', element: <VendorListPage /> },
+              { path: '/empresa/plan', element: <SubscriptionPage /> },
             ],
           },
         ],

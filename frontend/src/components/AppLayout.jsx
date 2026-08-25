@@ -1,10 +1,14 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   Award,
+  BadgeCheck,
   Building2,
+  ClipboardCheck,
   ClipboardList,
+  CreditCard,
   FileSearch,
   FileText,
+  Gavel,
   Inbox,
   LayoutDashboard,
   List,
@@ -32,7 +36,11 @@ const NAV = [
   { to: '/empresa/necesidades', label: 'Necesidades', icon: ClipboardList },
   { to: '/empresa/sourcing', label: 'Sourcing', icon: FileSearch },
   { to: '/empresa/invitaciones', label: 'Invitaciones', icon: Inbox },
+  { to: '/empresa/evaluacion/plantillas', label: 'Evaluación', icon: ClipboardCheck },
+  { to: '/empresa/aprobaciones', label: 'Aprobaciones', icon: Gavel },
+  { to: '/empresa/vendor-list', label: 'Vendor List', icon: BadgeCheck },
   { to: '/empresa/equipo', label: 'Equipo', icon: Users },
+  { to: '/empresa/plan', label: 'Plan', icon: CreditCard },
 ];
 
 function isNavItemActive(itemPath, currentPath) {

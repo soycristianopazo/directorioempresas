@@ -1,12 +1,15 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowRight, Building2, ShoppingCart, Store } from 'lucide-react';
+import { ArrowRight, BarChart3, Building2, ClipboardCheck, ShoppingCart, Store } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProfileCompletion } from '@/components/ProfileCompletion';
 import { cn } from '@/lib/utils';
+import { getBuyerSummary, getSupplierSummary } from '@/lib/analyticsApi';
+import { listMyPendingApprovals } from '@/lib/awardsApi';
 
 const STATUS_LABEL = { DRAFT: 'Borrador', ACTIVE: 'Publicado', SUSPENDED: 'Suspendido', ARCHIVED: 'Archivado' };
 const STATUS_VARIANT = { DRAFT: 'warning', ACTIVE: 'success', SUSPENDED: 'destructive', ARCHIVED: 'neutral' };
@@ -19,13 +22,41 @@ const ROLE_LABEL = {
 
 export default function DashboardPage() {
   const { activeOrg } = useAuth();
+  const [analytics, setAnalytics] = useState(null);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
+
+  const capabilities = activeOrg?.capabilities ?? [];
+  const isSupplier = capabilities.includes('SUPPLIER');
+  const isBuyer = capabilities.includes('BUYER');
+
+  useEffect(() => {
+    if (!activeOrg) return;
+    (async () => {
+      try {
+        const data = isBuyer
+          ? await getBuyerSummary(activeOrg.id)
+          : isSupplier
+            ? await getSupplierSummary(activeOrg.id)
+            : null;
+        setAnalytics(data);
+      } catch {
+        setAnalytics(null);
+      }
+      if (isBuyer) {
+        try {
+          const approvals = await listMyPendingApprovals(activeOrg.id);
+          setPendingApprovals(approvals.filter((a) => a.status === 'PENDING').length);
+        } catch {
+          setPendingApprovals(0);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrg?.id, isBuyer, isSupplier]);
 
   if (!activeOrg) return null;
 
-  const capabilities = activeOrg.capabilities ?? [];
   const roles = activeOrg.role_codes ?? [];
-  const isSupplier = capabilities.includes('SUPPLIER');
-  const isBuyer = capabilities.includes('BUYER');
 
   return (
     <div className="space-y-8">
@@ -120,6 +151,41 @@ export default function DashboardPage() {
           </Card>
         )}
       </section>
+
+      {isBuyer && pendingApprovals > 0 && (
+        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="flex items-center justify-between pt-6">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <ClipboardCheck className="size-4" />
+              Aprobaciones pendientes: {pendingApprovals}
+            </p>
+            <Link to="/empresa/aprobaciones">
+              <Button size="sm" variant="outline">
+                Ver
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+
+      {analytics && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="size-4 text-primary" />
+              Actividad de hoy
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            {Object.entries(analytics.today).map(([key, value]) => (
+              <div key={key}>
+                <dt className="text-xs text-muted-foreground">{key.replaceAll('_', ' ')}</dt>
+                <dd className="mt-0.5 text-2xl font-semibold">{value}</dd>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

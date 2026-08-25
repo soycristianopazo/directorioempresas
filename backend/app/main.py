@@ -25,16 +25,25 @@ from app.api.v1.accreditation import router as accreditation_router
 from app.api.v1.admin_accreditation import router as admin_accreditation_router
 from app.api.v1.admin_taxonomy import industries_router as admin_industries_router
 from app.api.v1.admin_taxonomy import router as admin_taxonomy_router
+from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.awards import approvals_router as award_approvals_router
+from app.api.v1.awards import policies_router as approval_policies_router
+from app.api.v1.awards import router as awards_router
+from app.api.v1.billing import router as billing_router
 from app.api.v1.credentials import reference_router as certification_types_router
 from app.api.v1.credentials import router as credentials_router
 from app.api.v1.discover import router as discover_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.documents import types_router as document_types_router
+from app.api.v1.evaluations import router as evaluations_router
+from app.api.v1.evaluations import templates_router as evaluation_templates_router
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.invitations import supplier_router as supplier_invitations_router
 from app.api.v1.matching import router as matching_router
 from app.api.v1.messaging import router as messaging_router
+from app.api.v1.negotiations import router as negotiations_router
+from app.api.v1.negotiations import supplier_router as supplier_negotiations_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.offerings import router as offerings_router
 from app.api.v1.organization_profile import router as organization_profile_router
@@ -49,6 +58,7 @@ from app.api.v1.supplier_lists import router as supplier_lists_router
 from app.api.v1.taxonomy import industries_router as industries_router
 from app.api.v1.taxonomy import router as taxonomy_router
 from app.api.v1.team import router as team_router
+from app.api.v1.vendor_list import router as vendor_list_router
 from app.core.config import settings
 from app.db.session import dispose_engine
 
@@ -111,6 +121,16 @@ app.include_router(quotations_router, prefix="/api")
 app.include_router(supplier_quotations_router, prefix="/api")
 app.include_router(messaging_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
+app.include_router(evaluation_templates_router, prefix="/api")
+app.include_router(evaluations_router, prefix="/api")
+app.include_router(negotiations_router, prefix="/api")
+app.include_router(supplier_negotiations_router, prefix="/api")
+app.include_router(awards_router, prefix="/api")
+app.include_router(award_approvals_router, prefix="/api")
+app.include_router(approval_policies_router, prefix="/api")
+app.include_router(vendor_list_router, prefix="/api")
+app.include_router(analytics_router, prefix="/api")
+app.include_router(billing_router, prefix="/api")
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

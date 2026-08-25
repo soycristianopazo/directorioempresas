@@ -6,14 +6,17 @@ import {
   Ban,
   ClipboardCheck,
   FileSearch,
+  Gavel,
   HelpCircle,
   Lock,
   Plus,
   Receipt,
+  Scale,
   Send,
   Trash2,
   Unlock,
   UserPlus,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
@@ -173,6 +176,7 @@ export default function SourcingEventDetailPage() {
           />
           <QuestionsCard organizationId={activeOrg.id} eventId={eventId} />
           <QuotationsCard organizationId={activeOrg.id} eventId={eventId} event={event} />
+          <EvaluationAndAwardCard eventId={eventId} />
           <ConversationPanel
             organizationId={activeOrg.id}
             contextType="SOURCING_EVENT"
@@ -184,6 +188,42 @@ export default function SourcingEventDetailPage() {
         </>
       )}
     </div>
+  );
+}
+
+function EvaluationAndAwardCard({ eventId }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Evaluación, negociación y adjudicación</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-wrap gap-2">
+        <Link to={`/empresa/sourcing/${eventId}/comite`}>
+          <Button variant="outline" className="gap-1.5">
+            <Users className="size-4" />
+            Comité de evaluación
+          </Button>
+        </Link>
+        <Link to={`/empresa/sourcing/${eventId}/comparador`}>
+          <Button variant="outline" className="gap-1.5">
+            <Scale className="size-4" />
+            Comparador
+          </Button>
+        </Link>
+        <Link to={`/empresa/sourcing/${eventId}/negociacion`}>
+          <Button variant="outline" className="gap-1.5">
+            <ClipboardCheck className="size-4" />
+            Negociación
+          </Button>
+        </Link>
+        <Link to={`/empresa/sourcing/${eventId}/adjudicacion`}>
+          <Button variant="outline" className="gap-1.5">
+            <Gavel className="size-4" />
+            Adjudicación
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
 

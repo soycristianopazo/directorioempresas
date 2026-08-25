@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.rls import session_for_system, session_for_user
 from app.repositories import members as members_repo
 from app.repositories import organizations as orgs_repo
+from app.services import entitlements as entitlements_service
 
 INVITATION_TTL_DAYS = 7
 
@@ -29,6 +30,7 @@ async def invite_member(
     async with session_for_user(user_id) as db:
         if not await orgs_repo.has_permission(db, organization_id, "member.manage"):
             raise TeamError("Sin permiso para administrar el equipo")
+        await entitlements_service.assert_entitlement(organization_id, "team.member")
 
         role = await members_repo.find_role_by_code(db, role_code)
         if role is None:

@@ -8,12 +8,18 @@ create+edit en fase 3), publish/cancel para sus transiciones específicas.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
 from app.db.rls import session_for_user
+from app.repositories import awards as awards_repo
+from app.repositories import invitations as invitations_repo
 from app.repositories import requirements as requirements_repo
 from app.repositories import sourcing as sourcing_repo
+from app.services import entitlements as entitlements_service
+from app.services import invitations as invitations_service
+from app.services import notifications as notifications_service
 
 PERM_READ = "sourcing_event.read"
 PERM_CREATE = "sourcing_event.create"
@@ -99,6 +105,9 @@ async def create_event(
 ) -> UUID:
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_CREATE)
+        await entitlements_service.assert_entitlement(
+            organization_id, "sourcing_event.create"
+        )
 
         requirement = None
         if requirement_id is not None:
@@ -227,3 +236,117 @@ async def delete_criterion(
         if criterion is None or criterion.sourcing_event_id != event_id:
             raise SourcingNotFoundError("Criterio no encontrado")
         await sourcing_repo.delete_criterion(db, criterion_id)
+
+
+# ─── Cierre del evento tras adjudicación (fase 8.7) ──────────────────────────
+
+_INVITATION_TERMINAL = {
+    "WITHDRAWN",
+    "DISQUALIFIED",
+    "EXPIRED",
+    "DECLINED",
+    "NO_RESPONSE",
+    "AWARDED",
+    "NOT_AWARDED",
+}
+_INVITATION_QUOTED_LIKE = {"QUOTED", "SHORTLISTED", "NEGOTIATING"}
+_INVITATION_EARLY = {"INVITED", "VIEWED", "NDA_ACCEPTED", "INTERESTED"}
+
+
+async def close_event(
+    *, user_id: UUID, organization_id: UUID, sourcing_event_id: UUID
+) -> None:
+    """Llamado por `services/awards.py::publish_award()` justo después de
+    publicar un award — nunca directamente por un router, así que no repite
+    el chequeo de permiso (`publish_award` ya validó `award.create` sobre
+    esta misma organización antes de llamar acá).
+
+    Transiciona `sourcing_events.status` a AWARDED (si hay algún award
+    PUBLISHED para el evento) y luego a CLOSED — dos `update_event` con un
+    `flush` intermedio para que la primera transición quede realmente escrita,
+    no solo pisada en memoria por la segunda antes del commit.
+
+    Para las invitaciones no terminales: las que llegaron a cotizar
+    (QUOTED/SHORTLISTED/NEGOTIATING, agregado por 0065/0066) pasan a AWARDED
+    si su organización ganó algún award PUBLISHED de este evento, NOT_AWARDED
+    si no. Las que nunca llegaron a cotizar (INVITED/VIEWED/NDA_ACCEPTED/
+    INTERESTED) pasan a EXPIRED — la transición ya existente en 0044 para
+    "evento cerrado sin respuesta", que es exactamente su caso. PARTICIPATING
+    (confirmó participar pero nunca envió cotización) no tiene ninguna
+    transición válida hacia un estado de cierre en
+    sourcing_event_invitation_transitions (ni en 0044 ni en 0066 se agregó
+    una) — se deja tal cual en vez de forzar una transición inexistente, que
+    rompería el principio de "transición-como-dato" de este módulo (ver
+    services/invitations.py). Terminales ya (WITHDRAWN/DISQUALIFIED/EXPIRED/
+    DECLINED/NO_RESPONSE) o ya decididas (AWARDED/NOT_AWARDED) se ignoran —
+    idempotente si se llama más de una vez para el mismo evento.
+    """
+    notify_targets: list[tuple[UUID, bool]] = []
+
+    async with session_for_user(user_id) as db:
+        event = await _get_owned_event(db, sourcing_event_id, organization_id)
+
+        event_awards = await awards_repo.list_awards_for_event(db, sourcing_event_id)
+        published_awards = [a for a in event_awards if a.status == "PUBLISHED"]
+        winners = {a.awarded_organization_id for a in published_awards}
+
+        if published_awards:
+            await sourcing_repo.update_event(event, status="AWARDED")
+            await db.flush()
+        await sourcing_repo.update_event(event, status="CLOSED")
+
+        invitations = await invitations_repo.list_for_event(db, sourcing_event_id)
+        for invitation in invitations:
+            if invitation.status in _INVITATION_TERMINAL:
+                continue
+            if invitation.status in _INVITATION_QUOTED_LIKE:
+                won = invitation.supplier_organization_id in winners
+                target = "AWARDED" if won else "NOT_AWARDED"
+                reason = "Adjudicado" if won else "Evento adjudicado a otro proveedor"
+            elif invitation.status in _INVITATION_EARLY:
+                won = False
+                target = "EXPIRED"
+                reason = "Evento cerrado sin respuesta"
+            else:
+                # PARTICIPATING sin cotización: sin transición válida, se deja.
+                continue
+            await invitations_service._transition(
+                db, invitation, to_status=target, actor_id=user_id, reason=reason
+            )
+            notify_targets.append((invitation.supplier_organization_id, won))
+
+    def _notify(supplier_org_id: UUID, won: bool):
+        if won:
+            return notifications_service.notify_org(
+                organization_id=supplier_org_id,
+                type="award.won",
+                title="Fuiste adjudicado",
+                body="Tu oferta fue adjudicada en un proceso de sourcing.",
+                entity_type="sourcing_event",
+                entity_id=sourcing_event_id,
+                action_url=f"/empresa/sourcing/{sourcing_event_id}",
+            )
+        return notifications_service.notify_org(
+            organization_id=supplier_org_id,
+            type="award.lost",
+            title="Proceso adjudicado a otro proveedor",
+            body="El proceso de sourcing en el que participaste fue adjudicado a otro proveedor.",
+            entity_type="sourcing_event",
+            entity_id=sourcing_event_id,
+            action_url=f"/empresa/sourcing/{sourcing_event_id}",
+        )
+
+    # En paralelo, no secuencial: cada notify_org() abre su propia
+    # session_for_system() independiente (mismo criterio que el resto del
+    # proyecto — notificar es un efecto de sistema, no comparte transacción
+    # con nadie), así que no hay estado compartido que proteja un await
+    # secuencial. Encontrado en vivo: con solo 2 destinatarios, la cadena
+    # secuencial (open_bids ya tenía este mismo patrón, pero para un único
+    # llamado) sumada al resto de close_event superaba el timeout de 15s del
+    # cliente HTTP — el award se publicaba igual (era solo el aviso al
+    # navegador el que llegaba tarde), pero el usuario veía un error donde no
+    # lo había.
+    if notify_targets:
+        await asyncio.gather(
+            *(_notify(supplier_org_id, won) for supplier_org_id, won in notify_targets)
+        )

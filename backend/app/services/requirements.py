@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.db.rls import session_for_user
 from app.repositories import requirements as requirements_repo
+from app.services import entitlements as entitlements_service
 
 PERM_READ = "requirement.read"
 PERM_WRITE = "requirement.write"
@@ -62,6 +63,9 @@ async def create_requirement(
 ) -> UUID:
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_WRITE)
+        await entitlements_service.assert_entitlement(
+            organization_id, "requirement.create"
+        )
         requirement = await requirements_repo.create_requirement(
             db, organization_id=organization_id, **fields
         )

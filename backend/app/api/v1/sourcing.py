@@ -18,6 +18,7 @@ from app.schemas.sourcing import (
     UpdateSourcingEventRequest,
     UpsertStageRequest,
 )
+from app.services import entitlements as entitlements_service
 from app.services import sourcing as sourcing_service
 
 router = APIRouter(
@@ -59,6 +60,10 @@ async def create_event(
         event_id = await sourcing_service.create_event(
             user_id=user_id, organization_id=organization_id, **payload.model_dump()
         )
+    except entitlements_service.EntitlementExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
+        ) from exc
     except sourcing_service.SourcingError as exc:
         raise _as_http_exception(exc) from exc
     return CreatedOut(id=event_id)

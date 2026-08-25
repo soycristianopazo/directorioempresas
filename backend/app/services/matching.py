@@ -147,10 +147,20 @@ def compute_accreditation_fit(
     valid_until: date | None,
     completion_pct: int | None,
     today: date,
+    avl_status: str | None = None,
 ) -> tuple[float, str]:
-    """§H.4.5 — ramas de "nivel superior" y "AVL de este comprador" se
-    omiten a propósito: no hay jerarquía de programas ni buyer_supplier_relationships
-    todavía (ver el plan de fase 6)."""
+    """§H.4.5 — la rama de "nivel superior" se sigue omitiendo a propósito:
+    no hay jerarquía de programas todavía (ver el plan de fase 6). La rama
+    de "AVL de este comprador" (fase 8.8, buyer_supplier_relationships) SÍ
+    se resuelve acá: un AVL APPROVED por este comprador puntual es la señal
+    más fuerte posible — más fuerte que estar acreditado en programa con
+    poca vigencia — así que tiene prioridad y corta la evaluación antes de
+    mirar `status`/`completion_pct`. SUSPENDED/BLOCKED no se manejan acá:
+    BLOCKED es un filtro duro de elegibilidad (Etapa 1, recall_candidates),
+    no una señal de puntaje; SUSPENDED cae al flujo normal de acreditación
+    de programa, sin señal AVL adicional."""
+    if avl_status == "APPROVED":
+        return 1.00, "Aprobado en la Vendor List del comprador"
     if status == "ACCREDITED":
         if valid_until is None or (valid_until - today).days > 90:
             return 1.00, "Acreditado, vigencia superior a 90 días"
@@ -430,6 +440,14 @@ async def run_matching(
             organization_ids=list(eligible_org_ids),
             program_id=event.requires_accreditation_program_id,
         )
+        # AVL de ESTE comprador (fase 8.8) — solo relevante donde
+        # accreditation_fit se calcula, ver compute_accreditation_fit
+        # §H.4.5 (un APPROVED tiene prioridad sobre la rama de programa).
+        avl_status_by_org = await matching_repo.fetch_avl_status(
+            db,
+            buyer_organization_id=organization_id,
+            organization_ids=list(eligible_org_ids),
+        )
 
         nice_attribute_results: dict[str, list[float]] = {
             str(oid): [] for oid in eligible_ids
@@ -507,6 +525,9 @@ async def run_matching(
                                 else None
                             ),
                             today=today,
+                            avl_status=avl_status_by_org.get(
+                                str(inputs.get("organization_id"))
+                            ),
                         )
                         if event.requires_accreditation_program_id
                         else None

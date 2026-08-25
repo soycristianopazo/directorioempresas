@@ -91,10 +91,11 @@ async def test_org(test_user: uuid.UUID) -> AsyncIterator[tuple[uuid.UUID, uuid.
     """(owner_user_id, organization_id) — el dueño hereda ORG_OWNER, que
     resuelve a todos los permisos de scope ORGANIZATION vía el comodín '*'
     (0009), incluidos accreditation.submit/manage."""
+    suffix = uuid.uuid4().hex[:8]
     org_id = await org_service.create_organization(
         created_by=test_user,
-        legal_name=f"Pytest Org {uuid.uuid4().hex[:8]}",
-        trade_name="Pytest Org",
+        legal_name=f"Pytest Org {suffix}",
+        trade_name=f"Pytest Org {suffix}",
         rut=_random_valid_rut(),
         capabilities=["SUPPLIER"],
     )
@@ -188,10 +189,11 @@ async def competing_supplier() -> AsyncIterator[dict]:
     user = await auth_service.register(
         first_name="Pytest", last_name="Competitor", email=email, password=PASSWORD
     )
+    suffix = uuid.uuid4().hex[:8]
     org_id = await org_service.create_organization(
         created_by=user.user_id,
-        legal_name=f"Pytest Competitor {uuid.uuid4().hex[:8]}",
-        trade_name="Pytest Competitor",
+        legal_name=f"Pytest Competitor {suffix}",
+        trade_name=f"Pytest Competitor {suffix}",
         rut=_random_valid_rut(),
         capabilities=["SUPPLIER"],
     )
@@ -214,18 +216,19 @@ async def supplier_offering(
     user = await auth_service.register(
         first_name="Pytest", last_name="Supplier", email=email, password=PASSWORD
     )
+    suffix = uuid.uuid4().hex[:8]
     org_id = await org_service.create_organization(
         created_by=user.user_id,
-        legal_name=f"Pytest Supplier {uuid.uuid4().hex[:8]}",
-        trade_name="Pytest Supplier",
+        legal_name=f"Pytest Supplier {suffix}",
+        trade_name=f"Pytest Supplier {suffix}",
         rut=_random_valid_rut(),
         capabilities=["SUPPLIER"],
     )
     await org_service.update_organization(
         user_id=user.user_id,
         organization_id=org_id,
-        legal_name="Pytest Supplier",
-        trade_name="Pytest Supplier",
+        legal_name=f"Pytest Supplier {suffix}",
+        trade_name=f"Pytest Supplier {suffix}",
         short_description="Proveedor de prueba para tests de matching.",
         description="Organización creada por la suite de tests de fase 6.",
         value_proposition=None,

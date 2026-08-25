@@ -83,6 +83,7 @@ async def list_for_event(session: AsyncSession, sourcing_event_id: UUID) -> list
     result = await session.execute(
         text(
             "select q.id, q.supplier_organization_id, q.status, q.first_submitted_at, "
+            "       q.current_revision_id, "
             "       qr.round_number, qr.total_amount, qr.total_amount_base, qr.currency_code, "
             "       qr.submitted_at "
             "from public.quotations q "

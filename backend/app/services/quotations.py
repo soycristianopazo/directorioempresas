@@ -129,7 +129,15 @@ async def submit_revision(
     notes: str | None,
     items: list[dict],
     responses: list[dict] | None = None,
+    round_type: str = "INITIAL",
 ) -> UUID:
+    """round_type parametrizable (antes hardcodeado a INITIAL) para que
+    services/negotiations.py::submit_counter() reutilice este mismo flujo de
+    envío para rondas COUNTER/BAFO (fase 8.5) — la policy de INSERT de
+    quotation_revisions (0061) es quien decide si la ronda vigente autoriza
+    el envío, este service solo valida el conjunto de valores conocido."""
+    if round_type not in ("INITIAL", "COUNTER", "BAFO"):
+        raise QuotationValidationError(f"round_type inválido: {round_type}")
     if total_amount < 0:
         raise QuotationValidationError("El monto total no puede ser negativo")
     if not items:
@@ -144,9 +152,14 @@ async def submit_revision(
                 "Esta organización no tiene una invitación activa para cotizar en este evento"
             )
 
-        deadline = await quotations_repo.get_bid_deadline(db, sourcing_event_id)
-        if deadline is not None and datetime.now(timezone.utc) > deadline:
-            raise QuotationValidationError("El plazo para cotizar ya venció")
+        if round_type == "INITIAL":
+            deadline = await quotations_repo.get_bid_deadline(db, sourcing_event_id)
+            if deadline is not None and datetime.now(timezone.utc) > deadline:
+                raise QuotationValidationError("El plazo para cotizar ya venció")
+        # round_type COUNTER/BAFO: el deadline relevante es el de la ronda de
+        # negociación (negotiation_rounds.deadline), no el BID_DEADLINE del
+        # evento — la policy de RLS (0061) ya lo exige antes de aceptar el
+        # INSERT, así que un envío tardío falla ahí, no acá.
 
         event = await sourcing_repo.get_event(db, sourcing_event_id)
         if event is None:
@@ -183,7 +196,7 @@ async def submit_revision(
             db,
             quotation_id=quotation.id,
             round_number=round_number,
-            round_type="INITIAL",
+            round_type=round_type,
             submitted_by=user_id,
             valid_until=valid_until,
             currency_code=currency_code,

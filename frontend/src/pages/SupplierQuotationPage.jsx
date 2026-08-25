@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ConversationPanel } from '@/components/ConversationPanel';
 import { getEvent } from '@/lib/sourcingApi';
 import { listMyRevisions, submitRevision } from '@/lib/quotationsApi';
+import { listMyRound, submitCounter } from '@/lib/negotiationsApi';
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -35,6 +36,7 @@ export default function SupplierQuotationPage() {
   const { activeOrg } = useAuth();
   const [detail, setDetail] = useState(null);
   const [revisions, setRevisions] = useState([]);
+  const [activeRound, setActiveRound] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -60,6 +62,8 @@ export default function SupplierQuotationPage() {
       return Object.fromEntries(d.items.map((item) => [item.id, emptyLineFor(item)]));
     });
     setRevisions(await listMyRevisions(activeOrg.id, eventId));
+    const rounds = await listMyRound(activeOrg.id, eventId);
+    setActiveRound(rounds.find((r) => !r.closed_at && !r.responded_at) || null);
   }
 
   useEffect(() => {
@@ -111,25 +115,32 @@ export default function SupplierQuotationPage() {
       };
     });
 
+    const payload = {
+      currencyCode: form.currencyCode.trim(),
+      validUntil: form.validUntil || null,
+      subtotal: form.subtotal ? Number(form.subtotal) : null,
+      taxAmount: form.taxAmount ? Number(form.taxAmount) : null,
+      totalAmount: Number(form.totalAmount),
+      paymentTerms: form.paymentTerms || null,
+      deliveryDays: form.deliveryDays ? Number(form.deliveryDays) : null,
+      warrantyTerms: form.warrantyTerms || null,
+      exclusions: form.exclusions || null,
+      notes: form.notes || null,
+      items,
+    };
+
     setSubmitting(true);
     try {
-      await submitRevision(activeOrg.id, eventId, {
-        currencyCode: form.currencyCode.trim(),
-        validUntil: form.validUntil || null,
-        subtotal: form.subtotal ? Number(form.subtotal) : null,
-        taxAmount: form.taxAmount ? Number(form.taxAmount) : null,
-        totalAmount: Number(form.totalAmount),
-        paymentTerms: form.paymentTerms || null,
-        deliveryDays: form.deliveryDays ? Number(form.deliveryDays) : null,
-        warrantyTerms: form.warrantyTerms || null,
-        exclusions: form.exclusions || null,
-        notes: form.notes || null,
-        items,
-      });
-      toast.success('Cotización enviada');
-      setRevisions(await listMyRevisions(activeOrg.id, eventId));
+      if (activeRound) {
+        await submitCounter(activeOrg.id, eventId, activeRound.id, payload);
+        toast.success('Contraoferta enviada');
+      } else {
+        await submitRevision(activeOrg.id, eventId, payload);
+        toast.success('Cotización enviada');
+      }
+      await loadAll();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo enviar la cotización');
+      toast.error(error.response?.data?.detail || 'No se pudo enviar la oferta');
     } finally {
       setSubmitting(false);
     }
@@ -154,11 +165,28 @@ export default function SupplierQuotationPage() {
         </p>
       </header>
 
+      {activeRound && (
+        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="pt-6 text-sm">
+            <p className="font-medium">
+              {activeRound.round_type === 'BAFO' ? 'Mejor oferta final solicitada' : 'Contraoferta solicitada'}
+            </p>
+            {activeRound.instructions && <p className="mt-1">{activeRound.instructions}</p>}
+            {activeRound.target_reduction_pct != null && (
+              <p className="mt-1">Reducción objetivo: {activeRound.target_reduction_pct}%</p>
+            )}
+            {activeRound.deadline && (
+              <p className="mt-1">Responder antes de: {formatDateTime(activeRound.deadline)}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="size-4 text-primary" />
-            Nueva revisión
+            {activeRound ? 'Responder a la ronda de negociación' : 'Nueva revisión'}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -361,7 +389,7 @@ export default function SupplierQuotationPage() {
 
             <Button type="submit" disabled={submitting} className="gap-1.5">
               <Send className="size-4" />
-              {submitting ? 'Enviando…' : 'Enviar cotización'}
+              {submitting ? 'Enviando…' : activeRound ? 'Enviar contraoferta' : 'Enviar cotización'}
             </Button>
           </form>
         </CardContent>

@@ -15,6 +15,7 @@ from app.schemas.requirements import (
     RequirementOut,
     UpdateRequirementRequest,
 )
+from app.services import entitlements as entitlements_service
 from app.services import requirements as requirements_service
 
 router = APIRouter(
@@ -55,6 +56,10 @@ async def create_requirement(
         requirement_id = await requirements_service.create_requirement(
             user_id=user_id, organization_id=organization_id, **payload.model_dump()
         )
+    except entitlements_service.EntitlementExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
+        ) from exc
     except requirements_service.RequirementError as exc:
         raise _as_http_exception(exc) from exc
     return CreatedOut(id=requirement_id)

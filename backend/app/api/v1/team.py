@@ -17,6 +17,7 @@ from app.schemas.organization import (
     TeamMemberOut,
     TeamRoleOut,
 )
+from app.services import entitlements as entitlements_service
 from app.services import team as team_service
 
 router = APIRouter(tags=["team"])
@@ -78,6 +79,10 @@ async def invite_member(
             email=payload.email,
             role_code=payload.role_code,
         )
+    except entitlements_service.EntitlementExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
+        ) from exc
     except team_service.TeamError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

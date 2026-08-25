@@ -22,8 +22,19 @@ QuotationStatusEnum = ENUM(
     create_type=False,
 )
 QuotationRoundTypeEnum = ENUM(
-    "INITIAL", name="quotation_round_type", schema="app", create_type=False
+    "INITIAL",
+    "CLARIFICATION",
+    "COUNTER",
+    "BAFO",
+    name="quotation_round_type",
+    schema="app",
+    create_type=False,
 )
+# Los tres últimos valores se agregaron en 0059 (fase 8.5) vía ALTER TYPE —
+# el objeto ENUM de SQLAlchemy se actualiza acá para reflejarlos aunque solo
+# INITIAL era usable cuando esta tabla se creó (0047). create_type=False:
+# SQLAlchemy nunca emite el DDL del tipo, solo necesita conocer los valores
+# válidos.
 
 
 class Quotation(Base):

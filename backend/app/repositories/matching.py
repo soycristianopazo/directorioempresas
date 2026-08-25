@@ -62,6 +62,18 @@ _RECALL_SQL = text(
         cast(:admin_division_ids as uuid[]) is null
         or si.admin_division_ids && cast(:admin_division_ids as uuid[])
       )
+      -- BLOCKED en el AVL de ESTE comprador (fase 8.8) es un filtro duro de
+      -- elegibilidad, no una señal de puntaje — mismo criterio que ya usa
+      -- docs/03-MATCHING-ENGINE.md para un MUST_HAVE bloqueante: si el
+      -- comprador bloqueó a este proveedor, ni siquiera debe aparecer como
+      -- candidato, no solo puntuar bajo.
+      and not exists (
+        select 1
+        from public.buyer_supplier_relationships bsr
+        where bsr.buyer_organization_id = :buyer_organization_id
+          and bsr.supplier_organization_id = si.organization_id
+          and bsr.status = 'BLOCKED'
+      )
     """
 )
 
@@ -575,6 +587,29 @@ async def fetch_accreditation_status(
         {"org_ids": [str(i) for i in organization_ids], "program_id": str(program_id)},
     )
     return {str(row.organization_id): dict(row._mapping) for row in result}
+
+
+async def fetch_avl_status(
+    session: AsyncSession, *, buyer_organization_id: UUID, organization_ids: list[UUID]
+) -> dict[str, str]:
+    """supplier_organization_id → status del AVL de ESTE comprador (fase
+    8.8) — usado por compute_accreditation_fit para dar prioridad a un
+    APPROVED sobre la acreditación de programa (§H.4.5)."""
+    if not organization_ids:
+        return {}
+    result = await session.execute(
+        text(
+            "select supplier_organization_id, status "
+            "from public.buyer_supplier_relationships "
+            "where buyer_organization_id = cast(:buyer_organization_id as uuid) "
+            "and supplier_organization_id = any (cast(:org_ids as uuid[]))"
+        ),
+        {
+            "buyer_organization_id": str(buyer_organization_id),
+            "org_ids": [str(i) for i in organization_ids],
+        },
+    )
+    return {str(row.supplier_organization_id): row.status for row in result}
 
 
 # ─── Persistencia ──────────────────────────────────────────────────────────────

@@ -22,14 +22,18 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from app.db.rls import session_for_system
+from app.repositories import billing as billing_repo
 from app.repositories import members as members_repo
 from app.services import auth as auth_service
+from app.services import awards as awards_service
+from app.services import evaluations as evaluations_service
 from app.services import invitations as invitations_service
 from app.services import organizations as org_service
 from app.services import quotations as quotations_service
 from app.services import requirements as requirements_service
 from app.services import sourcing as sourcing_service
 from app.services import team as team_service
+from app.services import vendor_list as vendor_list_service
 
 PASSWORD = "Directorio2026!"
 
@@ -39,6 +43,10 @@ USERS = [
     {"first_name": "Carla", "last_name": "Soto", "email": "carla@minerabeta.cl"},
     {"first_name": "Diego", "last_name": "Fuentes", "email": "diego@ingenieriasur.cl"},
     {"first_name": "Eva", "last_name": "Navarro", "email": "eva@australis.cl"},
+    # Fase 8: comité de evaluación y aprobador de Minera Beta.
+    {"first_name": "Diego", "last_name": "Peralta", "email": "diego@minerabeta.cl"},
+    {"first_name": "Fernanda", "last_name": "Vidal", "email": "fernanda@minerabeta.cl"},
+    {"first_name": "Roberto", "last_name": "Muñoz", "email": "roberto@minerabeta.cl"},
 ]
 
 # Cuenta de backoffice: no pertenece a ninguna organización, solo tiene un rol
@@ -74,7 +82,15 @@ async def wipe_existing() -> None:
                         "transportes-alfa",
                         "minera-beta",
                         "ingenieria-del-sur",
-                        "servicios-australis",
+                        # _slugify(trade_name or legal_name) usa trade_name
+                        # primero — "Australis" (no la razón social completa)
+                        # produce el slug "australis". Bug real encontrado en
+                        # vivo: esta lista tenía "servicios-australis" (la
+                        # razón social), que nunca coincide con ningún slug
+                        # real, así que wipe_existing() jamás borraba a
+                        # Australis — cada corrida del seed dejaba un
+                        # huérfano que colisionaba por RUT en la siguiente.
+                        "australis",
                     ]
                 )
             )
@@ -210,6 +226,27 @@ async def main() -> None:
         user_id=accounts["eva@australis.cl"], organization_id=australis_id
     )
     print(f"  ✓ Australis ({australis_id}) — proveedor, publicada (compite con Alfa)")
+
+    # Suscripciones ANTES de invitar equipo: el plan FREE limita team.member a
+    # 3 invitaciones TOTAL (0073) — Beta necesita más de 3 (Carla ya cuenta
+    # aparte por ser dueña sin pasar por invite_member, pero la invitación
+    # pendiente + Diego + Fernanda + Roberto son 4 invitaciones reales) antes
+    # de llegar al comité de fase 8. Asignar PRO antes de invitar a nadie es
+    # además la secuencia real: una organización se suscribe y LUEGO arma su
+    # equipo, no al revés.
+    async with session_for_system() as db:
+        pro_plan = await billing_repo.get_plan_by_code(db, "PRO")
+        free_plan = await billing_repo.get_plan_by_code(db, "FREE")
+        for org_id, plan in (
+            (alfa_id, pro_plan),
+            (beta_id, pro_plan),
+            (australis_id, pro_plan),
+            (sur_id, free_plan),
+        ):
+            await billing_repo.create_subscription(
+                db, organization_id=org_id, plan_id=plan.id, status="ACTIVE"
+            )
+    print("  ✓ Suscripciones: Alfa/Beta/Australis en PRO, Sur en FREE")
 
     print("\nArmando equipo y multiempresa...")
 
@@ -374,6 +411,236 @@ async def main() -> None:
     )
     print("  ✓ Australis vio la invitación (INVITED → VIEWED), sin cotizar todavía")
 
+    print("\nCreando recorrido de fase 8 (comité, comparador, adjudicación, AVL)...")
+
+    # ─── Comité de Minera Beta ──────────────────────────────────────────────
+    for email, role_code in (
+        ("diego@minerabeta.cl", "EVALUATOR"),
+        ("fernanda@minerabeta.cl", "EVALUATOR"),
+        ("roberto@minerabeta.cl", "BUYER_MANAGER"),
+    ):
+        _, accept_url = await team_service.invite_member(
+            user_id=accounts["carla@minerabeta.cl"],
+            organization_id=beta_id,
+            email=email,
+            role_code=role_code,
+        )
+        token = accept_url.rsplit("/", 1)[-1]
+        await team_service.accept_invitation(
+            user_id=accounts[email], user_email=email, token=token
+        )
+    print(
+        "  ✓ Diego y Fernanda (EVALUATOR), Roberto (BUYER_MANAGER) se unieron a Minera Beta"
+    )
+
+    # approval_limit_amount ya existe desde fase 1 (0005_rbac.sql) — fase 8 es
+    # la primera en usarlo de verdad. Carla queda DEBAJO del monto que se va a
+    # adjudicar (10.115.000) para que el gate de aprobación de Roberto sea
+    # real, no decorativo — mismo criterio que el resto del seed prioriza
+    # narrativas que se puedan demostrar en el navegador, no solo en la base.
+    async with session_for_system() as db:
+        carla_member = await members_repo.get_membership(
+            db, user_id=accounts["carla@minerabeta.cl"], organization_id=beta_id
+        )
+        roberto_member = await members_repo.get_membership(
+            db, user_id=accounts["roberto@minerabeta.cl"], organization_id=beta_id
+        )
+        await db.execute(
+            text(
+                "update public.organization_members "
+                "set approval_limit_amount = :amount, approval_limit_currency = 'CLP' "
+                "where id = :member_id"
+            ),
+            {"amount": 5_000_000, "member_id": str(carla_member.id)},
+        )
+        await db.execute(
+            text(
+                "update public.organization_members "
+                "set approval_limit_amount = :amount, approval_limit_currency = 'CLP' "
+                "where id = :member_id"
+            ),
+            {"amount": 50_000_000, "member_id": str(roberto_member.id)},
+        )
+    print("  ✓ Límites de aprobación: Carla $5.000.000, Roberto $50.000.000 CLP")
+
+    await awards_service.upsert_policy(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        step_order=1,
+        required_role_code="BUYER_MANAGER",
+        min_amount=0,
+        max_amount=None,
+    )
+    print("  ✓ Política de aprobación: cualquier monto necesita a un BUYER_MANAGER")
+
+    # ─── Plantilla y comité de evaluación ───────────────────────────────────
+    template_id = await evaluations_service.create_template(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        name="Transporte de personal — estándar",
+        description="Plantilla estándar para procesos de transporte de personal a faena.",
+        criteria=[
+            {"dimension": "TECHNICAL", "name": "Flota certificada", "weight": 40},
+            {"dimension": "TECHNICAL", "name": "Plan de seguridad", "weight": 30},
+            {"dimension": "COMMERCIAL", "name": "Precio total", "weight": 30},
+        ],
+    )
+    await evaluations_service.apply_template_to_event(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        template_id=template_id,
+    )
+    print("  ✓ Plantilla de evaluación aplicada al evento")
+
+    async with session_for_system() as db:
+        diego_member = await members_repo.get_membership(
+            db, user_id=accounts["diego@minerabeta.cl"], organization_id=beta_id
+        )
+        fernanda_member = await members_repo.get_membership(
+            db, user_id=accounts["fernanda@minerabeta.cl"], organization_id=beta_id
+        )
+    await evaluations_service.assign_committee(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        assignments=[
+            {
+                "organization_member_id": diego_member.id,
+                "dimension": "TECHNICAL",
+                "can_view_commercial": False,
+            },
+            {
+                "organization_member_id": fernanda_member.id,
+                "dimension": "COMMERCIAL",
+                "can_view_commercial": True,
+            },
+        ],
+    )
+    print("  ✓ Comité asignado: Diego (técnico, sin montos), Fernanda (comercial)")
+
+    # ─── Apertura de sobres ─────────────────────────────────────────────────
+    # El BID_DEADLINE original quedó 7 días en el futuro (fase 7) — se mueve
+    # al pasado acá para poder abrir la apertura en la misma corrida del
+    # script, simulando que el plazo ya venció.
+    await sourcing_service.upsert_stage(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        event_id=event_id,
+        stage_type="BID_DEADLINE",
+        scheduled_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    await quotations_service.open_bids(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+    )
+    print("  ✓ Ofertas abiertas (bid_opened_at fijado)")
+
+    quotations = await quotations_service.list_quotations(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+    )
+    alfa_quotation = next(
+        q for q in quotations if q["supplier_organization_id"] == alfa_id
+    )
+    alfa_quotation_id = alfa_quotation["id"]
+    alfa_revision_id = alfa_quotation["current_revision_id"]
+
+    # ─── Evaluaciones (bloqueo económico real: Diego nunca ve montos) ───────
+    setup = await evaluations_service.get_setup(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+    )
+    criteria_by_dimension = {}
+    for c in setup["criteria_snapshot"]:
+        criteria_by_dimension.setdefault(c["dimension"], []).append(c)
+
+    for criterion in criteria_by_dimension["TECHNICAL"]:
+        await evaluations_service.submit_score(
+            user_id=accounts["diego@minerabeta.cl"],
+            organization_id=beta_id,
+            sourcing_event_id=event_id,
+            quotation_id=alfa_quotation_id,
+            evaluation_criterion_id=criterion["id"],
+            score=85,
+            comment="Cumple con holgura.",
+        )
+    await evaluations_service.submit_evaluation(
+        user_id=accounts["diego@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        quotation_id=alfa_quotation_id,
+        overall_comment="Flota y plan de seguridad conformes.",
+    )
+    print("  ✓ Diego envió su evaluación técnica (nunca vio montos)")
+
+    for criterion in criteria_by_dimension["COMMERCIAL"]:
+        await evaluations_service.submit_score(
+            user_id=accounts["fernanda@minerabeta.cl"],
+            organization_id=beta_id,
+            sourcing_event_id=event_id,
+            quotation_id=alfa_quotation_id,
+            evaluation_criterion_id=criterion["id"],
+            score=90,
+            comment="Precio competitivo para el mercado actual.",
+        )
+    await evaluations_service.submit_evaluation(
+        user_id=accounts["fernanda@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        quotation_id=alfa_quotation_id,
+        overall_comment="Precio dentro de rango esperado.",
+    )
+    print("  ✓ Fernanda envió su evaluación comercial (con acceso a montos)")
+
+    await evaluations_service.run_comparator(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+    )
+    print("  ✓ Comparador ejecutado")
+
+    # ─── Adjudicación (queda PENDING_APPROVAL: gate real, no decorativo) ────
+    award_id = await awards_service.propose_award(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        sourcing_event_id=event_id,
+        awarded_organization_id=alfa_id,
+        quotation_revision_id=alfa_revision_id,
+        justification="Mejor evaluación técnica y comercial del proceso.",
+        items=[
+            {
+                "sourcing_event_item_id": item_id,
+                "quantity": 40,
+                "unit_price": 212_500,
+            }
+        ],
+    )
+    print(
+        f"  ✓ Adjudicación propuesta a Transportes Alfa ({award_id}) — "
+        "excede el límite de Carla, queda PENDING_APPROVAL para Roberto. "
+        "El seed NO la aprueba/publica/cierra a propósito: es el siguiente "
+        "paso manual en el navegador (login como roberto@minerabeta.cl)."
+    )
+
+    # ─── Vendor List / AVL ───────────────────────────────────────────────────
+    await vendor_list_service.set_relationship_status(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        supplier_organization_id=alfa_id,
+        status="APPROVED",
+    )
+    await vendor_list_service.set_relationship_status(
+        user_id=accounts["carla@minerabeta.cl"],
+        organization_id=beta_id,
+        supplier_organization_id=australis_id,
+        status="POTENTIAL",
+    )
+    print("  ✓ Vendor List: Alfa APPROVED, Australis POTENTIAL")
+
     print("\nCreando cuenta de backoffice...")
     admin_result = await auth_service.register(
         first_name="Admin",
@@ -442,6 +709,16 @@ async def main() -> None:
         "la invitación (VIEWED). Iniciar sesión como carla@minerabeta.cl para "
         "ver el evento sellado; como ana@transportesalfa.cl o "
         "eva@australis.cl para ver la bandeja de invitaciones de cada una."
+    )
+    print(
+        "\nRecorrido fase 8: ofertas abiertas, comité evaluó (Diego técnico "
+        "sin montos, Fernanda comercial con montos), comparador ejecutado, "
+        "adjudicación a Alfa propuesta y PENDING_APPROVAL (excede el límite "
+        "de Carla). Paso manual pendiente: iniciar sesión como "
+        "roberto@minerabeta.cl → aprobar en /empresa/aprobaciones → volver "
+        "como carla@minerabeta.cl → publicar y cerrar el proceso. Vendor "
+        "List: Alfa APPROVED, Australis POTENTIAL. Suscripciones: Alfa/Beta/"
+        "Australis en PRO, Ingeniería del Sur en FREE."
     )
 
 

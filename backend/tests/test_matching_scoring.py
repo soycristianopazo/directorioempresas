@@ -149,6 +149,20 @@ def test_accreditation_fit_no_process():
     assert score == 0.00
 
 
+def test_accreditation_fit_avl_approved():
+    """Fase 8.8 — un AVL APPROVED por este comprador puntual corta la
+    evaluación antes de mirar status/completion_pct: es la señal más fuerte
+    posible, más fuerte que estar acreditado en programa (§H.4.5)."""
+    score, _ = matching.compute_accreditation_fit(
+        status=None,
+        valid_until=None,
+        completion_pct=None,
+        today=date(2026, 1, 1),
+        avl_status="APPROVED",
+    )
+    assert score == 1.00
+
+
 # ─── performance_fit / responsiveness_fit (§H.4.6/7 — arranque neutral) ────────
 
 
