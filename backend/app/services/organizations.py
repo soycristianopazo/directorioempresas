@@ -13,8 +13,9 @@ import re
 import unicodedata
 from uuid import UUID
 
+from app.core import cache
 from app.core.rut import format_rut, is_valid_rut
-from app.db.rls import session_for_system, session_for_user
+from app.db.rls import gather_for_user, session_for_system, session_for_user
 from app.models.user import Profile
 from app.repositories import members as members_repo
 from app.repositories import organization_profile as profile_repo
@@ -109,6 +110,8 @@ async def update_organization(
         if "visibility" in fields:
             await search_service.reindex_org_offerings(db, organization_id)
 
+    cache.invalidate_prefix(f"org_detail:{organization_id}:")
+
 
 async def publish_organization(*, user_id: UUID, organization_id: UUID) -> None:
     async with session_for_user(user_id) as db:
@@ -141,6 +144,8 @@ async def publish_organization(*, user_id: UUID, organization_id: UUID) -> None:
         org.status = "ACTIVE"
         await search_service.reindex_org_offerings(db, organization_id)
 
+    cache.invalidate_prefix(f"org_detail:{organization_id}:")
+
 
 async def switch_organization(*, user_id: UUID, organization_id: UUID) -> None:
     """Persiste la organización activa como preferencia de UI.
@@ -162,34 +167,72 @@ async def switch_organization(*, user_id: UUID, organization_id: UUID) -> None:
             profile.last_org_id = organization_id
 
 
+_ORG_DETAIL_CACHE_TTL_SECONDS = 30
+
+
+def _org_detail_cache_key(organization_id: UUID, user_id: UUID) -> str:
+    return f"org_detail:{organization_id}:{user_id}"
+
+
 async def get_organization_detail(
     *, user_id: UUID, organization_id: UUID
 ) -> dict | None:
+    # Por usuario, no solo por organización: esta función no tiene un gate
+    # de permiso propio (a diferencia de team.py::list_team) — es RLS quien
+    # decide si `org` vuelve poblado o None. Cachear solo por organization_id
+    # serviría el resultado de un usuario a otro sin volver a pasar por esa
+    # decisión. Cachear por (organization_id, user_id) es seguro: la clave
+    # solo existe si ESE usuario ya pasó el filtro de RLS una vez.
+    cache_key = _org_detail_cache_key(organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Las tres solo necesitan organization_id, ya conocido — ninguna
+    # depende del resultado de otra — van en paralelo.
+    org, capabilities, identifier = await gather_for_user(
+        user_id,
+        lambda db: orgs_repo.get_by_id(db, organization_id),
+        lambda db: orgs_repo.list_capabilities(db, organization_id),
+        lambda db: orgs_repo.get_primary_legal_identifier(db, organization_id),
+    )
+    if org is None:
+        return None
+
+    result = {
+        "id": org.id,
+        "legal_name": org.legal_name,
+        "trade_name": org.trade_name,
+        "slug": org.slug,
+        "status": org.status,
+        "visibility": org.visibility,
+        "short_description": org.short_description,
+        "description": org.description,
+        "value_proposition": org.value_proposition,
+        "website_url": org.website_url,
+        "linkedin_url": org.linkedin_url,
+        "general_email": org.general_email,
+        "general_phone": org.general_phone,
+        "founded_year": org.founded_year,
+        "company_size": org.company_size,
+        "employee_count": org.employee_count,
+        "completion_pct": org.completion_pct,
+        "capabilities": capabilities,
+        "primary_identifier": identifier.value if identifier else None,
+    }
+    cache.set(cache_key, result, ttl_seconds=_ORG_DETAIL_CACHE_TTL_SECONDS)
+    return result
+
+
+async def get_own_profile_preview(*, user_id: UUID, organization_id: UUID) -> dict | None:
+    """Mismo agregado que `search_service.get_public_organization` (perfil
+    público completo), pero con la sesión del usuario en vez de una pública:
+    `app.can_view_organization` deja pasar a cualquier miembro de la
+    organización sin importar su `status`/`visibility` (ver
+    app.is_member_of en 0028), así que un proveedor puede previsualizar su
+    ficha antes de publicarla."""
     async with session_for_user(user_id) as db:
         org = await orgs_repo.get_by_id(db, organization_id)
-        if org is None:
-            return None
-        capabilities = await orgs_repo.list_capabilities(db, organization_id)
-        identifier = await orgs_repo.get_primary_legal_identifier(db, organization_id)
-
-        return {
-            "id": org.id,
-            "legal_name": org.legal_name,
-            "trade_name": org.trade_name,
-            "slug": org.slug,
-            "status": org.status,
-            "visibility": org.visibility,
-            "short_description": org.short_description,
-            "description": org.description,
-            "value_proposition": org.value_proposition,
-            "website_url": org.website_url,
-            "linkedin_url": org.linkedin_url,
-            "general_email": org.general_email,
-            "general_phone": org.general_phone,
-            "founded_year": org.founded_year,
-            "company_size": org.company_size,
-            "employee_count": org.employee_count,
-            "completion_pct": org.completion_pct,
-            "capabilities": capabilities,
-            "primary_identifier": identifier.value if identifier else None,
-        }
+    if org is None:
+        return None
+    return await search_service.get_public_organization(user_id, org.slug)

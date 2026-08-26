@@ -79,6 +79,33 @@ async def list_for_supplier(
     return [dict(row._mapping) for row in result]
 
 
+async def list_for_buyer_organization(
+    session: AsyncSession, buyer_organization_id: UUID
+) -> list[dict]:
+    """Espejo de list_for_supplier() para el otro lado de la fila: todas las
+    invitaciones que ESTA organización mandó, a través de TODOS sus
+    sourcing_events — antes solo existía list_for_event() (un evento a la
+    vez), sin vista agregada."""
+    result = await session.execute(
+        text(
+            "select sei.id, sei.sourcing_event_id, sei.status, sei.source, "
+            "       sei.invited_at, sei.viewed_at, sei.responded_at, "
+            "       se.event_code, se.name as event_name, se.event_type, "
+            "       se.bid_mode, se.requires_nda, "
+            "       sei.supplier_organization_id, "
+            "       o.legal_name as supplier_legal_name, "
+            "       o.trade_name as supplier_trade_name "
+            "from public.sourcing_event_invitations sei "
+            "join public.sourcing_events se on se.id = sei.sourcing_event_id "
+            "join public.organizations o on o.id = sei.supplier_organization_id "
+            "where se.organization_id = :org_id "
+            "order by sei.invited_at desc"
+        ),
+        {"org_id": str(buyer_organization_id)},
+    )
+    return [dict(row._mapping) for row in result]
+
+
 async def get_invitation(
     session: AsyncSession, invitation_id: UUID
 ) -> SourcingEventInvitation | None:
@@ -101,6 +128,28 @@ async def get_by_event_and_supplier(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def list_by_event_and_suppliers(
+    session: AsyncSession,
+    sourcing_event_id: UUID,
+    supplier_organization_ids: list[UUID],
+) -> list[SourcingEventInvitation]:
+    """Como `get_by_event_and_supplier`, para varios proveedores a la vez —
+    una sola query en vez de una por proveedor (negotiations.py::open_round/
+    close_round, que hoy resuelven la invitación de cada participante en un
+    loop)."""
+    if not supplier_organization_ids:
+        return []
+    result = await session.execute(
+        select(SourcingEventInvitation).where(
+            SourcingEventInvitation.sourcing_event_id == sourcing_event_id,
+            SourcingEventInvitation.supplier_organization_id.in_(
+                supplier_organization_ids
+            ),
+        )
+    )
+    return list(result.scalars())
 
 
 async def create_invitation(

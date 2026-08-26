@@ -15,14 +15,18 @@ aislamiento multiempresa, no un atajo.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import TypeVar
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
+
+_T = TypeVar("_T")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SET LOCAL, nunca SET
@@ -96,6 +100,30 @@ async def session_for_system() -> AsyncIterator[AsyncSession]:
 # Poner esa función aquí también crearía un import circular: este módulo la
 # necesitaría depender de app.api.deps, y app.api.deps ya depende de este
 # módulo para las funciones de más abajo.
+
+
+async def gather_for_user(
+    user_id: UUID | None, *reads: Callable[[AsyncSession], Awaitable[_T]]
+) -> list[_T]:
+    """Corre lecturas independientes en paralelo, cada una en su propia
+    conexión del pool con la misma identidad RLS ya fijada.
+
+    Solo para lecturas que no dependen entre sí: la base remota (Supabase,
+    Oregon) impone ~200-300ms de latencia por round trip, así que una función
+    que hoy encadena varios `await` secuenciales paga esa latencia una vez
+    por cada uno. Una `AsyncSession` no admite ejecuciones concurrentes sobre
+    sí misma — de ahí que cada lectura abra la suya, no que se repartan una
+    sesión compartida — por lo que cada rama ve su propia foto de datos ya
+    commiteados, no las escrituras sin commitear de otra rama ni de quien
+    llama. Nunca uses esto para mezclar una escritura con lecturas que deben
+    verla dentro de la misma transacción.
+    """
+
+    async def _run(read: Callable[[AsyncSession], Awaitable[_T]]) -> _T:
+        async with session_for_user(user_id) as session:
+            return await read(session)
+
+    return list(await asyncio.gather(*(_run(read) for read in reads)))
 
 
 async def get_public_session() -> AsyncIterator[AsyncSession]:

@@ -5,8 +5,10 @@ import api from '@/lib/api';
  * acreditación del proveedor, fase 5.3-5.7.
  */
 
-export async function listPrograms() {
-  const { data } = await api.get('/accreditation/programs');
+export async function listPrograms({ forOrganizationId } = {}) {
+  const { data } = await api.get('/accreditation/programs', {
+    params: forOrganizationId ? { for_organization_id: forOrganizationId } : undefined,
+  });
   return data;
 }
 
@@ -60,4 +62,17 @@ export async function respondToObservation(organizationId, enrollmentId) {
   await api.post(
     `/organizations/${organizationId}/accreditation/enrollments/${enrollmentId}/respond-to-observation`,
   );
+}
+
+export async function renewEnrollment(organizationId, enrollmentId) {
+  await api.post(
+    `/organizations/${organizationId}/accreditation/enrollments/${enrollmentId}/renew`,
+  );
+}
+
+export async function getCertificate(organizationId, enrollmentId) {
+  const { data } = await api.get(
+    `/organizations/${organizationId}/accreditation/enrollments/${enrollmentId}/certificate`,
+  );
+  return data;
 }

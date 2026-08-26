@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import CurrentUserId
 from app.schemas.requirements import (
@@ -13,7 +13,9 @@ from app.schemas.requirements import (
     CreateRequirementRequest,
     RequirementDetailOut,
     RequirementOut,
+    SetRequirementTagsRequest,
     UpdateRequirementRequest,
+    UploadRequirementDocumentResponse,
 )
 from app.services import entitlements as entitlements_service
 from app.services import requirements as requirements_service
@@ -81,6 +83,8 @@ async def get_requirement(
         requirement=RequirementOut.model_validate(detail["requirement"]),
         items=detail["items"],
         locations=detail["locations"],
+        documents=detail["documents"],
+        tags=detail["tags"],
     )
 
 
@@ -148,3 +152,71 @@ async def add_location(
     except requirements_service.RequirementError as exc:
         raise _as_http_exception(exc) from exc
     return CreatedOut(id=location_id)
+
+
+@router.delete(
+    "/{requirement_id}/locations/{location_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def remove_location(
+    organization_id: UUID,
+    requirement_id: UUID,
+    location_id: UUID,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await requirements_service.remove_location(
+            user_id=user_id,
+            organization_id=organization_id,
+            requirement_id=requirement_id,
+            location_id=location_id,
+        )
+    except requirements_service.RequirementError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.put(
+    "/{requirement_id}/tags", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def set_tags(
+    organization_id: UUID,
+    requirement_id: UUID,
+    payload: SetRequirementTagsRequest,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await requirements_service.set_tags(
+            user_id=user_id,
+            organization_id=organization_id,
+            requirement_id=requirement_id,
+            tags=payload.tags,
+        )
+    except requirements_service.RequirementError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.post(
+    "/{requirement_id}/documents",
+    status_code=status.HTTP_201_CREATED,
+    response_model=UploadRequirementDocumentResponse,
+)
+async def upload_document(
+    organization_id: UUID,
+    requirement_id: UUID,
+    user_id: CurrentUserId,
+    file: UploadFile = File(...),
+) -> UploadRequirementDocumentResponse:
+    content = await file.read()
+    try:
+        result = await requirements_service.upload_document(
+            user_id=user_id,
+            organization_id=organization_id,
+            requirement_id=requirement_id,
+            name=file.filename or "documento.pdf",
+            content=content,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except requirements_service.RequirementError as exc:
+        raise _as_http_exception(exc) from exc
+    return UploadRequirementDocumentResponse(**result)

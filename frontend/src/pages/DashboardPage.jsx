@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowRight, BarChart3, Building2, ClipboardCheck, ShoppingCart, Store } from 'lucide-react';
+import { ArrowRight, BadgeCheck, BarChart3, Building2, ClipboardCheck, ShoppingCart, Store } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,20 +10,17 @@ import { ProfileCompletion } from '@/components/ProfileCompletion';
 import { cn } from '@/lib/utils';
 import { getBuyerSummary, getSupplierSummary } from '@/lib/analyticsApi';
 import { listMyPendingApprovals } from '@/lib/awardsApi';
+import { listEnrollments } from '@/lib/accreditationApi';
+import { ROLE_LABEL } from '@/lib/roleLabels';
 
 const STATUS_LABEL = { DRAFT: 'Borrador', ACTIVE: 'Publicado', SUSPENDED: 'Suspendido', ARCHIVED: 'Archivado' };
 const STATUS_VARIANT = { DRAFT: 'warning', ACTIVE: 'success', SUSPENDED: 'destructive', ARCHIVED: 'neutral' };
-
-const ROLE_LABEL = {
-  ORG_OWNER: 'Dueño de la cuenta', ORG_ADMIN: 'Administrador', BUYER_MANAGER: 'Jefe de abastecimiento',
-  BUYER: 'Comprador', PROCUREMENT_ANALYST: 'Analista de abastecimiento', CONTRACT_MANAGER: 'Administrador de contrato',
-  EVALUATOR: 'Evaluador', SUPPLIER_ADMIN: 'Administrador proveedor', SALES: 'Ventas', VIEWER: 'Solo lectura',
-};
 
 export default function DashboardPage() {
   const { activeOrg } = useAuth();
   const [analytics, setAnalytics] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [platformAccreditation, setPlatformAccreditation] = useState(null);
 
   const capabilities = activeOrg?.capabilities ?? [];
   const isSupplier = capabilities.includes('SUPPLIER');
@@ -31,26 +28,52 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!activeOrg) return;
-    (async () => {
-      try {
-        const data = isBuyer
-          ? await getBuyerSummary(activeOrg.id)
-          : isSupplier
-            ? await getSupplierSummary(activeOrg.id)
-            : null;
-        setAnalytics(data);
-      } catch {
-        setAnalytics(null);
-      }
-      if (isBuyer) {
-        try {
-          const approvals = await listMyPendingApprovals(activeOrg.id);
-          setPendingApprovals(approvals.filter((a) => a.status === 'PENDING').length);
-        } catch {
-          setPendingApprovals(0);
-        }
-      }
-    })();
+    // Las tres llamadas son independientes entre sí (analítica, aprobaciones
+    // pendientes, acreditación) — antes se esperaban una tras otra con
+    // `await` secuencial, así que el panel tardaba la suma de las tres
+    // latencias en vez de la mayor. Se disparan todas de una y cada una
+    // resuelve su propio estado sin bloquear a las demás.
+    let cancelled = false;
+
+    const analyticsPromise = isBuyer
+      ? getBuyerSummary(activeOrg.id)
+      : isSupplier
+        ? getSupplierSummary(activeOrg.id)
+        : Promise.resolve(null);
+    const approvalsPromise = isBuyer ? listMyPendingApprovals(activeOrg.id) : Promise.resolve(null);
+    const enrollmentsPromise = isSupplier ? listEnrollments(activeOrg.id) : Promise.resolve(null);
+
+    analyticsPromise
+      .then((data) => {
+        if (!cancelled) setAnalytics(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAnalytics(null);
+      });
+
+    approvalsPromise
+      .then((approvals) => {
+        if (cancelled || approvals == null) return;
+        setPendingApprovals(approvals.filter((a) => a.status === 'PENDING').length);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingApprovals(0);
+      });
+
+    enrollmentsPromise
+      .then((enrollments) => {
+        if (cancelled || enrollments == null) return;
+        setPlatformAccreditation(
+          enrollments.find((e) => e.program_owner_scope === 'PLATFORM' && e.status === 'ACCREDITED') ?? null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPlatformAccreditation(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrg?.id, isBuyer, isSupplier]);
 
@@ -96,6 +119,27 @@ export default function DashboardPage() {
           </Button>
         )}
       </header>
+
+      {platformAccreditation && (
+        <Card className="border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/20">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <p className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+              <BadgeCheck className="size-4" />
+              Acreditado como proveedor del Directorio de Empresas
+              {platformAccreditation.valid_until && (
+                <span className="font-normal text-emerald-700/80 dark:text-emerald-400/80">
+                  · vigente hasta {new Date(platformAccreditation.valid_until).toLocaleDateString('es-CL')}
+                </span>
+              )}
+            </p>
+            <Link to={`/empresa/acreditacion/${platformAccreditation.id}/certificado`}>
+              <Button size="sm" variant="outline">
+                Ver certificado
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -145,8 +189,7 @@ export default function DashboardPage() {
               <NextStep label="Invitar a tu equipo" to="/empresa/equipo" />
               <NextStep label="Buscar proveedores" to="/buscar" />
               <NextStep label="Crear tu lista de proveedores" to="/empresa/listas" />
-              <NextStep label="Registrar una necesidad de compra" to="/empresa/necesidades" />
-              <NextStep label="Crear un proceso de sourcing" to="/empresa/sourcing" />
+              <NextStep label="Publicar una necesidad de compra" to="/empresa/sourcing" />
             </CardContent>
           </Card>
         )}

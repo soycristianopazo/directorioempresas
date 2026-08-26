@@ -25,7 +25,7 @@ const CATEGORY_LABELS = {
 
 function statusBadge(doc) {
   if (!doc.active_version_id) {
-    return <Badge variant="outline">Sin subir</Badge>;
+    return <Badge variant="neutral">Sin subir</Badge>;
   }
   if (doc.valid_until) {
     const expired = new Date(doc.valid_until) < new Date();
@@ -42,9 +42,13 @@ export default function DocumentsPage() {
   const [expanded, setExpanded] = useState(null);
 
   async function loadAll() {
-    const [ts, docs] = await Promise.all([listDocumentTypes(), listDocuments(activeOrg.id)]);
-    setTypes(ts);
-    setDocuments(docs);
+    try {
+      const [ts, docs] = await Promise.all([listDocumentTypes(), listDocuments(activeOrg.id)]);
+      setTypes(ts);
+      setDocuments(docs);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar los documentos');
+    }
   }
 
   useEffect(() => {
@@ -118,7 +122,13 @@ function DocumentRow({ type, doc, organizationId, expanded, onToggle, onUploaded
 
   useEffect(() => {
     if (!expanded || !doc) return;
-    listDocumentVersions(organizationId, doc.id).then(setVersions);
+    listDocumentVersions(organizationId, doc.id)
+      .then(setVersions)
+      .catch((error) => {
+        toast.error(
+          error.response?.data?.detail || 'No se pudieron cargar las versiones del documento'
+        );
+      });
   }, [expanded, doc, organizationId]);
 
   async function handleUpload(event) {
@@ -166,7 +176,7 @@ function DocumentRow({ type, doc, organizationId, expanded, onToggle, onUploaded
             <ul className="space-y-1 text-xs text-muted-foreground">
               {versions.map((v) => (
                 <li key={v.id} className="flex items-center gap-2">
-                  <Badge variant="outline">{v.status}</Badge>
+                  <Badge variant="neutral">{v.status}</Badge>
                   {v.valid_until && <span>vence {v.valid_until}</span>}
                   {v.url && (
                     <a

@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.repositories import awards as awards_repo
 from app.repositories import members as members_repo
 from app.repositories import quotations as quotations_repo
@@ -98,15 +98,28 @@ async def propose_award(
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_CREATE)
 
-        event = await sourcing_repo.get_event(db, sourcing_event_id)
-        if event is None or event.organization_id != organization_id:
-            raise AwardNotFoundError("Evento no encontrado")
-        if event.status == "CANCELLED":
-            raise AwardValidationError("No se puede adjudicar un evento cancelado")
+    # Las cuatro solo necesitan sourcing_event_id/quotation_revision_id, ya
+    # conocidos — ninguna depende del resultado de otra — van en paralelo.
+    event, revision, event_items, quotation_items = await gather_for_user(
+        user_id,
+        lambda db: sourcing_repo.get_event(db, sourcing_event_id),
+        lambda db: quotations_repo.get_revision(db, quotation_revision_id),
+        lambda db: sourcing_repo.list_items(db, sourcing_event_id),
+        lambda db: quotations_repo.list_items(db, quotation_revision_id),
+    )
+    if event is None or event.organization_id != organization_id:
+        raise AwardNotFoundError("Evento no encontrado")
+    if event.status == "CANCELLED":
+        raise AwardValidationError("No se puede adjudicar un evento cancelado")
+    if revision is None:
+        raise AwardNotFoundError("Revisión de cotización no encontrada")
 
-        revision = await quotations_repo.get_revision(db, quotation_revision_id)
-        if revision is None:
-            raise AwardNotFoundError("Revisión de cotización no encontrada")
+    valid_item_ids = {i.id for i in event_items}
+    quotation_items_by_event_item = {
+        qi.sourcing_event_item_id: qi for qi in quotation_items
+    }
+
+    async with session_for_user(user_id) as db:
         quotation = await quotations_repo.get_quotation(db, revision.quotation_id)
         if (
             quotation is None
@@ -116,14 +129,6 @@ async def propose_award(
             raise AwardValidationError(
                 "La revisión no corresponde a una cotización de ese proveedor en este evento"
             )
-
-        valid_item_ids = {
-            i.id for i in await sourcing_repo.list_items(db, sourcing_event_id)
-        }
-        quotation_items_by_event_item = {
-            qi.sourcing_event_item_id: qi
-            for qi in await quotations_repo.list_items(db, quotation_revision_id)
-        }
 
         prepared_items = []
         amount = 0.0
@@ -240,6 +245,9 @@ async def decide(
         raise AwardValidationError("decision debe ser APPROVED o REJECTED")
 
     async with session_for_user(user_id) as db:
+        # `approval` se muta más abajo (update_approval) y necesita quedar
+        # atado a ESTA sesión para que el cambio se persista al comitear —
+        # por eso se trae acá y no en una conexión paralela aparte.
         approval = await awards_repo.get_approval(db, approval_id)
         if approval is None:
             raise AwardNotFoundError("Aprobación no encontrada")

@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 OfferingType = Literal[
     "PRODUCT", "SERVICE", "RENTAL", "SOFTWARE", "TRAINING", "CONSULTING"
@@ -70,6 +70,7 @@ class OfferingOut(BaseModel):
     visibility: str
     status: str
     published_at: datetime | None
+    completion_pct: int
 
 
 class TaxonomyNodeAssignment(BaseModel):
@@ -94,6 +95,14 @@ class SetOfferingIndustriesRequest(BaseModel):
 class OfferingIndustryOut(BaseModel):
     industry_id: UUID
     name: str
+
+
+class SetOfferingTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=15)
+
+
+class OfferingTagOut(BaseModel):
+    tag: str
 
 
 class AddOfferingTerritoryRequest(BaseModel):
@@ -171,3 +180,51 @@ class AttributeValueOut(BaseModel):
 
 class CreatedOut(BaseModel):
     id: UUID
+
+
+class CreateDealRequest(BaseModel):
+    deal_price: float = Field(gt=0)
+    original_price: float | None = Field(default=None, gt=0)
+    currency_code: str = Field(min_length=3, max_length=3)
+    unit_code: str | None = None
+    stock_quantity: int | None = Field(default=None, gt=0)
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_limit(self) -> "CreateDealRequest":
+        if (self.stock_quantity is None) == (self.expires_at is None):
+            raise ValueError(
+                "La oferta necesita exactamente uno: stock límite o fecha límite"
+            )
+        return self
+
+
+class UpdateDealStockRequest(BaseModel):
+    stock_remaining: int = Field(ge=0)
+
+
+class DealOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    offering_id: UUID
+    deal_price: float
+    original_price: float | None
+    currency_code: str
+    unit_code: str | None
+    stock_quantity: int | None
+    stock_remaining: int | None
+    expires_at: datetime | None
+    cancelled_at: datetime | None
+    created_at: datetime
+    is_active: bool = False
+
+
+class OrgDealOut(DealOut):
+    """DealOut + de qué publicación es — solo para el listado agregado del
+    dashboard de Ofertas (GET /organizations/{id}/deals), que cruza varias
+    publicaciones a la vez."""
+
+    offering_name: str
+    offering_slug: str
+    offering_status: str

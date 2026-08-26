@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.organization_profile import (
     OrganizationContact,
+    OrganizationEconomicActivity,
     OrganizationIndustry,
     OrganizationLocation,
     OrganizationMedia,
@@ -245,6 +246,60 @@ async def remove_industry(
         delete(OrganizationIndustry).where(
             OrganizationIndustry.organization_id == organization_id,
             OrganizationIndustry.industry_id == industry_id,
+        )
+    )
+
+
+async def list_economic_activities(
+    session: AsyncSession, organization_id: UUID
+) -> list[dict]:
+    result = await session.execute(
+        text(
+            "select oea.sii_code, oea.is_primary, sea.description "
+            "from public.organization_economic_activities oea "
+            "join public.sii_economic_activities sea on sea.code = oea.sii_code "
+            "where oea.organization_id = :org_id "
+            "order by sea.code"
+        ),
+        {"org_id": str(organization_id)},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+async def upsert_economic_activity(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    sii_code: str,
+    is_primary: bool,
+) -> OrganizationEconomicActivity:
+    result = await session.execute(
+        select(OrganizationEconomicActivity).where(
+            OrganizationEconomicActivity.organization_id == organization_id,
+            OrganizationEconomicActivity.sii_code == sii_code,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = OrganizationEconomicActivity(
+            organization_id=organization_id,
+            sii_code=sii_code,
+            is_primary=is_primary,
+        )
+        session.add(row)
+    else:
+        row.is_primary = is_primary
+    await session.flush()
+    return row
+
+
+async def remove_economic_activity(
+    session: AsyncSession, *, organization_id: UUID, sii_code: str
+) -> None:
+    await session.execute(
+        delete(OrganizationEconomicActivity).where(
+            OrganizationEconomicActivity.organization_id == organization_id,
+            OrganizationEconomicActivity.sii_code == sii_code,
         )
     )
 

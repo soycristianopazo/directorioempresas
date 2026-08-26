@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
+import { EnrollmentReviewPanel } from '@/components/accreditation/EnrollmentReviewPanel';
 import {
   createProgram,
   decideEnrollment,
@@ -33,8 +33,12 @@ export default function AdminAccreditationPage() {
   const [selectedId, setSelectedId] = useState(null);
 
   async function loadQueue() {
-    const rows = await listReviewQueue('UNDER_REVIEW');
-    setQueue(rows);
+    try {
+      const rows = await listReviewQueue('UNDER_REVIEW');
+      setQueue(rows);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar la cola de revisión');
+    }
   }
 
   useEffect(() => {
@@ -96,11 +100,18 @@ export default function AdminAccreditationPage() {
                       <span className="font-medium">{item.organization_name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">{item.program_name}</span>
                     </div>
-                    <Badge variant="outline">{item.completion_pct}%</Badge>
+                    <Badge variant="neutral">{item.completion_pct}%</Badge>
                   </button>
                   {selectedId === item.id && (
                     <EnrollmentReviewPanel
                       item={item}
+                      loadDetail={(i) => getEnrollmentDetail(i.organization_id, i.id)}
+                      reviewFulfillment={(fulfillmentId, decision) =>
+                        reviewFulfillment(fulfillmentId, { decision })
+                      }
+                      decideEnrollment={(decision, reason) =>
+                        decideEnrollment(item.id, { decision, reason })
+                      }
                       onDecided={async () => {
                         setSelectedId(null);
                         await loadQueue();
@@ -171,96 +182,3 @@ export default function AdminAccreditationPage() {
   );
 }
 
-const ENROLLMENT_DECISION_OPTIONS = [
-  { value: 'ACCREDITED', label: 'Acreditar' },
-  { value: 'OBSERVED', label: 'Observar' },
-  { value: 'REJECTED', label: 'Rechazar' },
-];
-
-function EnrollmentReviewPanel({ item, onDecided }) {
-  const [detail, setDetail] = useState(null);
-  const [enrollmentDecision, setEnrollmentDecision] = useState('ACCREDITED');
-  const [reason, setReason] = useState('');
-
-  async function load() {
-    const d = await getEnrollmentDetail(item.organization_id, item.id);
-    setDetail(d);
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id]);
-
-  async function onReview(fulfillmentId, decision) {
-    try {
-      await reviewFulfillment(fulfillmentId, { decision });
-      toast.success('Ítem actualizado');
-      await load();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo actualizar el ítem');
-    }
-  }
-
-  async function onDecide() {
-    try {
-      await decideEnrollment(item.id, { decision: enrollmentDecision, reason });
-      toast.success('Decisión registrada');
-      await onDecided();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo registrar la decisión');
-    }
-  }
-
-  if (!detail) return <div className="mt-2 h-12 animate-pulse rounded-lg bg-secondary" />;
-
-  return (
-    <div className="mt-3 space-y-3 border-t pt-3">
-      <ul className="space-y-2">
-        {detail.fulfillments.map((f) => (
-          <li key={f.id} className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs">
-            <span>
-              {f.group_name} · {f.requirement_name}
-              <Badge variant="outline" className="ml-2">
-                {f.status}
-              </Badge>
-            </span>
-            <div className="flex gap-1">
-              <Button size="sm" variant="outline" onClick={() => onReview(f.id, 'APPROVED')}>
-                Aprobar
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => onReview(f.id, 'OBSERVED')}>
-                Observar
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => onReview(f.id, 'REJECTED')}>
-                Rechazar
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-        <div className="space-y-1.5">
-          <Label htmlFor={`decision-${item.id}`}>Decisión final</Label>
-          <SelectNative
-            id={`decision-${item.id}`}
-            value={enrollmentDecision}
-            onChange={(e) => setEnrollmentDecision(e.target.value)}
-          >
-            {ENROLLMENT_DECISION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </SelectNative>
-        </div>
-        <div className="flex-1 space-y-1.5">
-          <Label htmlFor={`reason-${item.id}`}>Motivo (opcional)</Label>
-          <Input id={`reason-${item.id}`} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </div>
-        <Button onClick={onDecide}>Registrar decisión</Button>
-      </div>
-    </div>
-  );
-}

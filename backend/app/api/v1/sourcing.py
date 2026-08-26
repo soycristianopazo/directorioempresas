@@ -13,7 +13,9 @@ from app.schemas.sourcing import (
     CreatedOut,
     CreateCriterionRequest,
     CreateSourcingEventRequest,
+    DeclareVoidRequest,
     SourcingEventDetailOut,
+    SourcingEventListOut,
     SourcingEventOut,
     UpdateSourcingEventRequest,
     UpsertStageRequest,
@@ -39,17 +41,17 @@ def _as_http_exception(exc: sourcing_service.SourcingError) -> HTTPException:
     )
 
 
-@router.get("", response_model=list[SourcingEventOut])
+@router.get("", response_model=list[SourcingEventListOut])
 async def list_events(
     organization_id: UUID, user_id: CurrentUserId
-) -> list[SourcingEventOut]:
+) -> list[SourcingEventListOut]:
     try:
-        rows = await sourcing_service.list_events(
+        rows = await sourcing_service.list_events_with_stage(
             user_id=user_id, organization_id=organization_id
         )
     except sourcing_service.SourcingError as exc:
         raise _as_http_exception(exc) from exc
-    return [SourcingEventOut.model_validate(r) for r in rows]
+    return [SourcingEventListOut.model_validate(r) for r in rows]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=CreatedOut)
@@ -129,6 +131,26 @@ async def cancel_event(
     try:
         await sourcing_service.cancel_event(
             user_id=user_id, organization_id=organization_id, event_id=event_id
+        )
+    except sourcing_service.SourcingError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.post(
+    "/{event_id}/void", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def declare_void(
+    organization_id: UUID,
+    event_id: UUID,
+    payload: DeclareVoidRequest,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await sourcing_service.declare_void(
+            user_id=user_id,
+            organization_id=organization_id,
+            event_id=event_id,
+            reason=payload.reason,
         )
     except sourcing_service.SourcingError as exc:
         raise _as_http_exception(exc) from exc

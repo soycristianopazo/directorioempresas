@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Users } from 'lucide-react';
+import { Save, Users } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SelectNative } from '@/components/ui/select-native';
 import { listTeam } from '@/lib/organizationsApi';
-import { getEvent } from '@/lib/sourcingApi';
 import {
   listTemplates,
   getSetup,
@@ -29,7 +28,7 @@ const DIMENSIONS = [
 export default function EvaluationCommitteePage() {
   const { eventId } = useParams();
   const { activeOrg } = useAuth();
-  const [event, setEvent] = useState(null);
+  const { event } = useOutletContext();
   const [team, setTeam] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [setup, setSetup] = useState(null);
@@ -38,27 +37,29 @@ export default function EvaluationCommitteePage() {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [detail, teamRows, templateRows, currentSetup, committee] = await Promise.all([
-      getEvent(activeOrg.id, eventId),
-      listTeam(activeOrg.id),
-      listTemplates(activeOrg.id),
-      getSetup(activeOrg.id, eventId),
-      listCommittee(activeOrg.id, eventId),
-    ]);
-    setEvent(detail.event);
-    setTeam(teamRows);
-    setTemplates(templateRows);
-    setSetup(currentSetup);
+    try {
+      const [teamRows, templateRows, currentSetup, committee] = await Promise.all([
+        listTeam(activeOrg.id),
+        listTemplates(activeOrg.id),
+        getSetup(activeOrg.id, eventId),
+        listCommittee(activeOrg.id, eventId),
+      ]);
+      setTeam(teamRows);
+      setTemplates(templateRows);
+      setSetup(currentSetup);
 
-    const byMember = {};
-    for (const a of committee) {
-      byMember[a.organization_member_id] = {
-        assigned: true,
-        dimension: a.dimension,
-        canViewCommercial: a.can_view_commercial,
-      };
+      const byMember = {};
+      for (const a of committee) {
+        byMember[a.organization_member_id] = {
+          assigned: true,
+          dimension: a.dimension,
+          canViewCommercial: a.can_view_commercial,
+        };
+      }
+      setRows(byMember);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el comité de evaluación');
     }
-    setRows(byMember);
   }
 
   useEffect(() => {
@@ -118,17 +119,6 @@ export default function EvaluationCommitteePage() {
         <title>Comité de evaluación · Directorio de Empresas</title>
       </Helmet>
 
-      <div>
-        <Link
-          to={`/empresa/sourcing/${eventId}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          Volver al proceso
-        </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Comité de evaluación</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{event.name}</p>
-      </div>
 
       <Card>
         <CardHeader>

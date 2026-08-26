@@ -23,7 +23,7 @@ from datetime import datetime as dt
 from typing import Any
 from uuid import UUID
 
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.repositories import matching as matching_repo
 from app.repositories import requirements as requirements_repo
 from app.repositories import sourcing as sourcing_repo
@@ -148,23 +148,31 @@ def compute_accreditation_fit(
     completion_pct: int | None,
     today: date,
     avl_status: str | None = None,
+    accredited_via_equivalent: bool = False,
 ) -> tuple[float, str]:
-    """§H.4.5 — la rama de "nivel superior" se sigue omitiendo a propósito:
-    no hay jerarquía de programas todavía (ver el plan de fase 6). La rama
-    de "AVL de este comprador" (fase 8.8, buyer_supplier_relationships) SÍ
-    se resuelve acá: un AVL APPROVED por este comprador puntual es la señal
-    más fuerte posible — más fuerte que estar acreditado en programa con
-    poca vigencia — así que tiene prioridad y corta la evaluación antes de
-    mirar `status`/`completion_pct`. SUSPENDED/BLOCKED no se manejan acá:
-    BLOCKED es un filtro duro de elegibilidad (Etapa 1, recall_candidates),
-    no una señal de puntaje; SUSPENDED cae al flujo normal de acreditación
-    de programa, sin señal AVL adicional."""
+    """§H.4.5. La rama de "AVL de este comprador" (fase 8.8,
+    buyer_supplier_relationships) se resuelve primero: un AVL APPROVED por
+    este comprador puntual es la señal más fuerte posible — más fuerte que
+    estar acreditado en programa con poca vigencia — así que tiene prioridad
+    y corta la evaluación antes de mirar `status`/`completion_pct`.
+    SUSPENDED/BLOCKED no se manejan acá: BLOCKED es un filtro duro de
+    elegibilidad (Etapa 1, recall_candidates), no una señal de puntaje;
+    SUSPENDED cae al flujo normal de acreditación de programa, sin señal AVL
+    adicional.
+
+    accredited_via_equivalent (fase 9.1, homologación cruzada) cubre la rama
+    antes documentada sin implementar: "acreditado en un programa de nivel
+    superior o equivalente → 0.90" — 0.90 nunca 1.00, reservado a la
+    acreditación directa en program_id; solo se evalúa cuando status no es
+    ya ACCREDITED (la acreditación directa siempre gana)."""
     if avl_status == "APPROVED":
         return 1.00, "Aprobado en la Vendor List del comprador"
     if status == "ACCREDITED":
         if valid_until is None or (valid_until - today).days > 90:
             return 1.00, "Acreditado, vigencia superior a 90 días"
         return 0.85, "Acreditado, vence en menos de 90 días"
+    if accredited_via_equivalent:
+        return 0.90, "Acreditado en un programa homologado"
     if status == "UNDER_REVIEW":
         return 0.40, "Acreditación en revisión"
     if completion_pct is not None and completion_pct >= 70:
@@ -290,6 +298,28 @@ async def _require(db, organization_id: UUID, permission: str) -> None:
         raise MatchingPermissionError(f"Sin permiso ({permission}) para esta acción")
 
 
+async def _evaluate_criterion(
+    db, criterion: dict, candidate_offering_ids: list[UUID]
+) -> tuple[set[str], set[str]]:
+    """(satisfechos, con_dato_declarado) para UN criterio. Cada criterio es
+    independiente de los demás — quien llama los corre en paralelo."""
+    if criterion["criterion_type"] == "ATTRIBUTE":
+        satisfied = await matching_repo.evaluate_attribute_criterion(
+            db, criterion=criterion, candidate_offering_ids=candidate_offering_ids
+        )
+        declared = await matching_repo.has_declared_attribute(
+            db,
+            attribute_definition_id=criterion["attribute_definition_id"],
+            candidate_offering_ids=candidate_offering_ids,
+        )
+    else:
+        satisfied = await matching_repo.eligible_offering_ids_for_criterion(
+            db, criterion=criterion, candidate_offering_ids=candidate_offering_ids
+        )
+        declared = set(str(i) for i in candidate_offering_ids)
+    return satisfied, declared
+
+
 async def run_matching(
     *,
     user_id: UUID,
@@ -319,7 +349,19 @@ async def run_matching(
             raise MatchingValidationError(
                 "El evento no tiene líneas — nada que matchear"
             )
-        taxonomy_node_id = items[0].taxonomy_node_id
+        requirement = (
+            await requirements_repo.get_requirement(db, event.requirement_id)
+            if event.requirement_id
+            else None
+        )
+        # La categoría de la primera línea manda si se declaró (permite
+        # variar por línea dentro de un mismo evento); si no, cae a la
+        # categoría fijada a nivel de necesidad — antes
+        # requirement.primary_taxonomy_node_id no alimentaba nada acá pese a
+        # que la UI de creación ya lo pedía ("Giro / categoría").
+        taxonomy_node_id = items[0].taxonomy_node_id or (
+            requirement.primary_taxonomy_node_id if requirement else None
+        )
         required_quantity = sum(float(i.quantity) for i in items if not i.is_optional)
 
         admin_division_ids: list[UUID] = []
@@ -367,26 +409,18 @@ async def run_matching(
         blocking_reasons: dict[str, list[str]] = {
             str(c["offering_id"]): [] for c in candidates
         }
-        for criterion in must_criteria:
-            if criterion["criterion_type"] == "ATTRIBUTE":
-                satisfied = await matching_repo.evaluate_attribute_criterion(
-                    db,
-                    criterion=criterion,
-                    candidate_offering_ids=candidate_offering_ids,
-                )
-                declared = await matching_repo.has_declared_attribute(
-                    db,
-                    attribute_definition_id=criterion["attribute_definition_id"],
-                    candidate_offering_ids=candidate_offering_ids,
-                )
-            else:
-                satisfied = await matching_repo.eligible_offering_ids_for_criterion(
-                    db,
-                    criterion=criterion,
-                    candidate_offering_ids=candidate_offering_ids,
-                )
-                declared = set(str(i) for i in candidate_offering_ids)
-
+        # Cada criterio MUST_HAVE es independiente de los demás — hoy son
+        # hasta 2 round trips por criterio, uno tras otro. Se evalúan todos
+        # en paralelo (una conexión del pool por criterio) y el resultado se
+        # procesa en Python, secuencial, sin volver a tocar la BD.
+        must_results = await gather_for_user(
+            user_id,
+            *(
+                (lambda db, c=criterion: _evaluate_criterion(db, c, candidate_offering_ids))
+                for criterion in must_criteria
+            ),
+        )
+        for criterion, (satisfied, declared) in zip(must_criteria, must_results, strict=True):
             label = criterion["description"] or criterion["criterion_type"]
             for offering_id in blocking_reasons:
                 if offering_id in satisfied:
@@ -402,67 +436,83 @@ async def run_matching(
         candidate_node_ids = sorted(
             {n for c in candidates for n in c["taxonomy_node_ids"]}
         )
-        category_scores = (
-            await matching_repo.category_fit_scores(
+        industry_id = requirement.industry_id if requirement else None
+
+        async def _category_scores(db):
+            if not taxonomy_node_id:
+                return {}
+            return await matching_repo.category_fit_scores(
                 db,
                 requested_node_id=taxonomy_node_id,
                 candidate_node_ids=candidate_node_ids,
             )
-            if taxonomy_node_id
-            else {}
-        )
-        territory_scores = await matching_repo.territory_fit_scores(
-            db,
-            admin_division_ids=admin_division_ids,
-            candidate_offering_ids=eligible_ids,
-            max_mobilization_days=None,
-        )
 
-        industry_id = None
-        if event.requirement_id:
-            linked_requirement = await requirements_repo.get_requirement(
-                db, event.requirement_id
-            )
-            industry_id = linked_requirement.industry_id if linked_requirement else None
-
-        scoring_inputs = await matching_repo.fetch_scoring_inputs(
-            db,
-            offering_ids=eligible_ids,
-            industry_id=industry_id,
-            taxonomy_node_id=taxonomy_node_id,
-            admin_division_ids=admin_division_ids or None,
+        # Las tres solo necesitan valores Python ya calculados
+        # (taxonomy_node_id, candidate_node_ids, admin_division_ids,
+        # eligible_ids, industry_id) — ninguna depende del resultado de
+        # otra — van en paralelo en vez de encadenadas.
+        category_scores, territory_scores, scoring_inputs = await gather_for_user(
+            user_id,
+            _category_scores,
+            lambda db: matching_repo.territory_fit_scores(
+                db,
+                admin_division_ids=admin_division_ids,
+                candidate_offering_ids=eligible_ids,
+                max_mobilization_days=None,
+            ),
+            lambda db: matching_repo.fetch_scoring_inputs(
+                db,
+                offering_ids=eligible_ids,
+                industry_id=industry_id,
+                taxonomy_node_id=taxonomy_node_id,
+                admin_division_ids=admin_division_ids or None,
+            ),
         )
         eligible_org_ids = {
             UUID(str(v["organization_id"])) for v in scoring_inputs.values()
         }
-        accreditation_status = await matching_repo.fetch_accreditation_status(
-            db,
-            organization_ids=list(eligible_org_ids),
-            program_id=event.requires_accreditation_program_id,
-        )
-        # AVL de ESTE comprador (fase 8.8) — solo relevante donde
-        # accreditation_fit se calcula, ver compute_accreditation_fit
-        # §H.4.5 (un APPROVED tiene prioridad sobre la rama de programa).
-        avl_status_by_org = await matching_repo.fetch_avl_status(
-            db,
-            buyer_organization_id=organization_id,
-            organization_ids=list(eligible_org_ids),
+        # Las tres son independientes entre sí (todas solo necesitan
+        # eligible_org_ids/program_id, ya conocidos) — en paralelo en vez de
+        # encadenadas. Homologación cruzada = fase 9.1; AVL = fase 8.8, ver
+        # compute_accreditation_fit §H.4.5 (un APPROVED tiene prioridad
+        # sobre la rama de programa).
+        (
+            accreditation_status,
+            equivalent_accreditation_status,
+            avl_status_by_org,
+        ) = await gather_for_user(
+            user_id,
+            lambda db: matching_repo.fetch_accreditation_status(
+                db,
+                organization_ids=list(eligible_org_ids),
+                program_id=event.requires_accreditation_program_id,
+            ),
+            lambda db: matching_repo.fetch_equivalent_accreditation_status(
+                db,
+                organization_ids=list(eligible_org_ids),
+                program_id=event.requires_accreditation_program_id,
+            ),
+            lambda db: matching_repo.fetch_avl_status(
+                db,
+                buyer_organization_id=organization_id,
+                organization_ids=list(eligible_org_ids),
+            ),
         )
 
         nice_attribute_results: dict[str, list[float]] = {
             str(oid): [] for oid in eligible_ids
         }
-        for criterion in nice_criteria:
-            if criterion["criterion_type"] != "ATTRIBUTE":
-                continue
-            satisfied = await matching_repo.evaluate_attribute_criterion(
-                db, criterion=criterion, candidate_offering_ids=eligible_ids
-            )
-            declared = await matching_repo.has_declared_attribute(
-                db,
-                attribute_definition_id=criterion["attribute_definition_id"],
-                candidate_offering_ids=eligible_ids,
-            )
+        attribute_nice_criteria = [
+            c for c in nice_criteria if c["criterion_type"] == "ATTRIBUTE"
+        ]
+        nice_results = await gather_for_user(
+            user_id,
+            *(
+                (lambda db, c=criterion: _evaluate_criterion(db, c, eligible_ids))
+                for criterion in attribute_nice_criteria
+            ),
+        )
+        for satisfied, declared in nice_results:
             for oid_str in nice_attribute_results:
                 is_declared = oid_str in declared
                 meets = oid_str in satisfied
@@ -528,6 +578,8 @@ async def run_matching(
                             avl_status=avl_status_by_org.get(
                                 str(inputs.get("organization_id"))
                             ),
+                            accredited_via_equivalent=str(inputs.get("organization_id"))
+                            in equivalent_accreditation_status,
                         )
                         if event.requires_accreditation_program_id
                         else None

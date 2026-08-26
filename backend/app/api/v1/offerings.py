@@ -10,20 +10,25 @@ from app.api.deps import CurrentUserId
 from app.schemas.offerings import (
     AddOfferingTerritoryRequest,
     AttributeValueOut,
+    CreateDealRequest,
     CreateOfferingRequest,
     CreatedOut,
+    DealOut,
     DocumentOut,
     MediaOut,
     OfferingIndustryOut,
     OfferingOut,
+    OfferingTagOut,
     OfferingTaxonomyNodeOut,
     OfferingTerritoryOut,
     PricingOut,
     SetAttributeValueRequest,
     SetOfferingIndustriesRequest,
+    SetOfferingTagsRequest,
     SetPricingRequest,
     SetStatusRequest,
     SetTaxonomyNodesRequest,
+    UpdateDealStockRequest,
     UpdateOfferingRequest,
 )
 from app.services import offerings as offerings_service
@@ -226,6 +231,39 @@ async def set_industries(
             organization_id=organization_id,
             offering_id=offering_id,
             industry_ids=payload.industry_ids,
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.get("/{offering_id}/tags", response_model=list[OfferingTagOut])
+async def list_tags(
+    organization_id: UUID, offering_id: UUID, user_id: CurrentUserId
+) -> list[OfferingTagOut]:
+    try:
+        tags = await offerings_service.list_tags(
+            user_id=user_id, organization_id=organization_id, offering_id=offering_id
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+    return [OfferingTagOut(tag=t) for t in tags]
+
+
+@router.put(
+    "/{offering_id}/tags", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def set_tags(
+    organization_id: UUID,
+    offering_id: UUID,
+    payload: SetOfferingTagsRequest,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await offerings_service.set_tags(
+            user_id=user_id,
+            organization_id=organization_id,
+            offering_id=offering_id,
+            tags=payload.tags,
         )
     except offerings_service.OfferingError as exc:
         raise _as_http_exception(exc) from exc
@@ -442,6 +480,86 @@ async def delete_document(
             organization_id=organization_id,
             offering_id=offering_id,
             document_id=document_id,
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+# ─── Ofertas (deals) ──────────────────────────────────────────────────────────
+
+
+@router.get("/{offering_id}/deals", response_model=list[DealOut])
+async def list_deals(
+    organization_id: UUID, offering_id: UUID, user_id: CurrentUserId
+) -> list[DealOut]:
+    try:
+        rows = await offerings_service.list_deals(
+            user_id=user_id, organization_id=organization_id, offering_id=offering_id
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+    return [DealOut(**r) for r in rows]
+
+
+@router.post(
+    "/{offering_id}/deals", status_code=status.HTTP_201_CREATED, response_model=CreatedOut
+)
+async def create_deal(
+    organization_id: UUID,
+    offering_id: UUID,
+    payload: CreateDealRequest,
+    user_id: CurrentUserId,
+) -> CreatedOut:
+    try:
+        deal_id = await offerings_service.create_deal(
+            user_id=user_id,
+            organization_id=organization_id,
+            offering_id=offering_id,
+            **payload.model_dump(),
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+    return CreatedOut(id=deal_id)
+
+
+@router.put(
+    "/{offering_id}/deals/{deal_id}/stock",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def update_deal_stock(
+    organization_id: UUID,
+    offering_id: UUID,
+    deal_id: UUID,
+    payload: UpdateDealStockRequest,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await offerings_service.update_deal_stock(
+            user_id=user_id,
+            organization_id=organization_id,
+            offering_id=offering_id,
+            deal_id=deal_id,
+            stock_remaining=payload.stock_remaining,
+        )
+    except offerings_service.OfferingError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.post(
+    "/{offering_id}/deals/{deal_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def cancel_deal(
+    organization_id: UUID, offering_id: UUID, deal_id: UUID, user_id: CurrentUserId
+) -> None:
+    try:
+        await offerings_service.cancel_deal(
+            user_id=user_id,
+            organization_id=organization_id,
+            offering_id=offering_id,
+            deal_id=deal_id,
         )
     except offerings_service.OfferingError as exc:
         raise _as_http_exception(exc) from exc

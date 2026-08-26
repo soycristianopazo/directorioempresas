@@ -53,3 +53,14 @@ class AdminDivisionOut(BaseModel):
     slug: str
     official_code: str | None
     name: str
+
+
+class SiiEconomicActivityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    description: str
+    sector: str
+    subgroup: str | None
+    vat_affected: str
+    tax_category: str

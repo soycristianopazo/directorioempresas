@@ -20,28 +20,41 @@
 
 {% block content %}
 <div class="container">
+  {% if preview %}
+  <div class="preview-banner">
+    Vista previa — así se verá tu perfil cuando esté público. Esta página no cuenta como visita ni se indexa.
+  </div>
+  {% endif %}
+
   <div class="profile-header">
-    {% if logo_url %}<img class="profile-logo" src="{{ logo_url }}" alt="Logo de {{ org.trade_name or org.legal_name }}" />{% endif %}
+    {% if logo_url %}<img class="profile-logo {% if logo_shape == 'HORIZONTAL' %}profile-logo--horizontal{% endif %}" src="{{ logo_url }}" alt="Logo de {{ org.trade_name or org.legal_name }}" />{% endif %}
     <div>
-      <h1>{{ org.trade_name or org.legal_name }}</h1>
+      <div class="profile-title-row">
+        <h1>{{ org.trade_name or org.legal_name }}</h1>
+        {% if is_accredited %}
+        <span class="badge badge-accredited">✓ Acreditado</span>
+        {% else %}
+        <span class="badge badge-not-accredited">Sin acreditar</span>
+        {% endif %}
+      </div>
       {% if org.short_description %}<p class="tagline">{{ org.short_description }}</p>{% endif %}
       <div class="result-meta">
+        {% if headquarters and (headquarters.comuna or headquarters.region) %}
+        <span class="badge">
+          {%- if headquarters.comuna %}{{ headquarters.comuna }}{% if headquarters.region %}, {% endif %}{% endif -%}
+          {%- if headquarters.region %}{{ headquarters.region }}{% endif -%}
+        </span>
+        {% endif %}
+        {% if years_experience and years_experience > 0 %}
+        <span class="badge">{{ years_experience }} años de experiencia</span>
+        {% endif %}
         {% for i in industries %}<span class="badge">{{ i }}</span>{% endfor %}
+        {% for g in economic_activities %}<span class="badge">{{ g }}</span>{% endfor %}
         {% if org.website_url %}<a class="badge" href="{{ org.website_url }}" target="_blank" rel="noopener">Sitio web</a>{% endif %}
+        {% if org.linkedin_url %}<a class="badge" href="{{ org.linkedin_url }}" target="_blank" rel="noopener">LinkedIn</a>{% endif %}
       </div>
     </div>
   </div>
-
-  {% if trust_badges %}
-  <section class="profile-section">
-    <h2>Acreditaciones</h2>
-    <div class="result-meta">
-      {% for b in trust_badges %}
-      <span class="badge" title="{{ b.description or '' }}">✓ {{ b.name }}</span>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
 
   {% if org.description %}
   <section class="profile-section">
@@ -64,7 +77,7 @@
     <h2>Catálogo ({{ offerings | length }})</h2>
     <div class="offering-grid">
       {% for item in offerings %}
-      <div class="offering-card">
+      <div class="offering-card" id="offering-{{ item.offering.slug }}">
         {% if item.media %}<img src="{{ item.media[0].url }}" alt="{{ item.offering.name }}" />{% endif %}
         <div class="body">
           <h3>{{ item.offering.name }}</h3>

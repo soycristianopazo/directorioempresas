@@ -113,6 +113,7 @@ class SupplierOffering(Base):
         OfferingStatusEnum, nullable=False, server_default="DRAFT"
     )
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completion_pct: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
@@ -149,6 +150,24 @@ class OfferingIndustry(Base):
     )
     industry_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("industries.id"), primary_key=True
+    )
+
+
+class OfferingTag(Base):
+    __tablename__ = "offering_tags"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    offering_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_offerings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tag: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
     )
 
 
@@ -227,6 +246,50 @@ class OfferingMedia(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class OfferingDeal(Base):
+    """Oferta por stock u cuenta regresiva sobre un producto/servicio ya
+    publicado (fase 11) — ver alembic/sql/0092_offering_deals.sql. Sin
+    columna de estado: vigencia = cancelled_at is null and (expires_at is
+    null or expires_at > now()) and (stock_quantity is null or
+    stock_remaining > 0), calculada donde se lea, no guardada."""
+
+    __tablename__ = "offering_deals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    offering_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_offerings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    deal_price: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    original_price: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    currency_code: Mapped[str] = mapped_column(
+        CHAR(3), ForeignKey("currencies.code"), nullable=False
+    )
+    unit_code: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("units_of_measure.code")
+    )
+
+    stock_quantity: Mapped[int | None] = mapped_column(Integer)
+    stock_remaining: Mapped[int | None] = mapped_column(Integer)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    cancelled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="SET NULL")
     )
 
 

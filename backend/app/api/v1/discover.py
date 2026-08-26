@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from app.api.deps import PublicSession
 from app.schemas.search import (
@@ -29,6 +29,7 @@ router = APIRouter(prefix="/discover", tags=["discover"])
 @router.get("/search", response_model=SearchResponseOut)
 async def search(
     session: PublicSession,
+    background_tasks: BackgroundTasks,
     q: str | None = None,
     taxonomy_node_ids: list[UUID] = Query(default_factory=list),
     industry_ids: list[UUID] = Query(default_factory=list),
@@ -48,6 +49,7 @@ async def search(
         availability_status=availability_status,
         page=page,
         page_size=page_size,
+        background_tasks=background_tasks,
     )
     return SearchResponseOut(
         results=[SearchResultOut(**r) for r in result["results"]],
@@ -67,8 +69,8 @@ async def search(
 
 
 @router.get("/organizations/{slug}", response_model=PublicOrganizationOut)
-async def get_organization(session: PublicSession, slug: str) -> PublicOrganizationOut:
-    profile = await search_service.get_public_organization(session, slug)
+async def get_organization(slug: str) -> PublicOrganizationOut:
+    profile = await search_service.get_public_organization(None, slug)
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Organización no encontrada"

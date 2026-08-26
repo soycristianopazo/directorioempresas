@@ -94,7 +94,7 @@ async def create_program(
     payload: CreateProgramRequest, user_id: CurrentUserId
 ) -> CreatedOut:
     try:
-        program_id = await accreditation_service.create_program(
+        program_id = await accreditation_service.create_platform_program(
             user_id=user_id, **payload.model_dump()
         )
     except accreditation_service.AccreditationError as exc:

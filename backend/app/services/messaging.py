@@ -19,6 +19,7 @@ transacción con RLS), mismo bucket privado único de este proyecto
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -79,17 +80,23 @@ async def get_or_create_conversation(
                 created_by_organization_id=organization_id,
                 created_by=user_id,
             )
+        # add_participant es upsert (on conflict do nothing) — se llama
+        # siempre, no solo al crear: find_conversation_by_context matchea
+        # por (context_type, context_id) sin mirar quién ya participa, así
+        # que una conversación ORGANIZATION encontrada (no creada por mí)
+        # podía devolverse sin que el propio caller quedara como
+        # participante — el siguiente listMessages/sendMessage fallaba con
+        # 403 "solo un participante puede...". Bug preexistente, encontrado
+        # en vivo probando la bandeja de Chat nueva.
+        await messaging_repo.add_participant(
+            db, conversation_id=conversation_id, organization_id=organization_id
+        )
+        for participant_org_id in participant_organization_ids:
+            if participant_org_id == organization_id:
+                continue
             await messaging_repo.add_participant(
-                db, conversation_id=conversation_id, organization_id=organization_id
+                db, conversation_id=conversation_id, organization_id=participant_org_id
             )
-            for participant_org_id in participant_organization_ids:
-                if participant_org_id == organization_id:
-                    continue
-                await messaging_repo.add_participant(
-                    db,
-                    conversation_id=conversation_id,
-                    organization_id=participant_org_id,
-                )
     return conversation_id
 
 
@@ -135,16 +142,23 @@ async def send_message(
             db, conversation_id, organization_id
         )
 
-    for other_org_id in other_org_ids:
-        await notifications_service.notify_org(
-            organization_id=other_org_id,
-            type="message.received",
-            title="Nuevo mensaje",
-            body=body[:100],
-            entity_type="conversation",
-            entity_id=conversation_id,
-            action_url=f"/empresa/mensajes/{conversation_id}",
+    # Cada notify_org abre su propia sesión de sistema (ver el docstring de
+    # notify_org) — son transacciones independientes entre sí, así que
+    # avisar a varias organizaciones participantes va en paralelo.
+    await asyncio.gather(
+        *(
+            notifications_service.notify_org(
+                organization_id=other_org_id,
+                type="message.received",
+                title="Nuevo mensaje",
+                body=body[:100],
+                entity_type="conversation",
+                entity_id=conversation_id,
+                action_url=f"/empresa/mensajes?conversationId={conversation_id}",
+            )
+            for other_org_id in other_org_ids
         )
+    )
     return message_id
 
 

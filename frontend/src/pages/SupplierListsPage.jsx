@@ -22,12 +22,18 @@ export default function SupplierListsPage() {
   const [newName, setNewName] = useState('');
 
   async function load() {
-    const rows = await listSupplierLists(activeOrg.id);
-    setLists(rows);
-    const entries = await Promise.all(
-      rows.map(async (l) => [l.id, await listSupplierListItems(activeOrg.id, l.id)]),
-    );
-    setItems(Object.fromEntries(entries));
+    try {
+      const rows = await listSupplierLists(activeOrg.id);
+      setLists(rows);
+      const entries = await Promise.all(
+        rows.map(async (l) => [l.id, await listSupplierListItems(activeOrg.id, l.id)]),
+      );
+      setItems(Object.fromEntries(entries));
+    } catch (error) {
+      toast.error(
+        error.response?.data?.detail || 'No se pudieron cargar las listas de proveedores',
+      );
+    }
   }
 
   useEffect(() => {

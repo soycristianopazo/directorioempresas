@@ -7,24 +7,24 @@ import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { getEvent } from '@/lib/sourcingApi';
 import { getLatestResults, runMatching } from '@/lib/matchingApi';
 
 export default function MatchResultsPage() {
   const { eventId } = useParams();
   const { activeOrg } = useAuth();
-  const [event, setEvent] = useState(null);
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [expanded, setExpanded] = useState(null);
 
   async function loadAll() {
-    const detail = await getEvent(activeOrg.id, eventId);
-    setEvent(detail.event);
-    const latest = await getLatestResults(activeOrg.id, eventId);
-    if (latest) {
-      setResponse({ ...latest.run, results: latest.results });
+    try {
+      const latest = await getLatestResults(activeOrg.id, eventId);
+      if (latest) {
+        setResponse({ ...latest.run, results: latest.results });
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar los resultados de matching');
     }
   }
 
@@ -60,16 +60,12 @@ export default function MatchResultsPage() {
         <title>Resultados de matching · Directorio de Empresas</title>
       </Helmet>
 
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Resultados de matching</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{event?.name}</p>
-        </div>
+      <div className="flex items-center justify-end">
         <Button onClick={onRun} disabled={running}>
           <Sparkles className="size-4" />
           {running ? 'Calculando…' : 'Correr matching'}
         </Button>
-      </header>
+      </div>
 
       {response && (
         <p className="text-sm text-muted-foreground">

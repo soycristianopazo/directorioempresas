@@ -59,6 +59,17 @@ export async function setOfferingIndustries(organizationId, offeringId, industry
   });
 }
 
+export async function getOfferingTags(organizationId, offeringId) {
+  const { data } = await api.get(
+    `/organizations/${organizationId}/offerings/${offeringId}/tags`,
+  );
+  return data;
+}
+
+export async function setOfferingTags(organizationId, offeringId, tags) {
+  await api.put(`/organizations/${organizationId}/offerings/${offeringId}/tags`, { tags });
+}
+
 export async function getOfferingTerritories(organizationId, offeringId) {
   const { data } = await api.get(
     `/organizations/${organizationId}/offerings/${offeringId}/territories`,
@@ -127,6 +138,46 @@ export async function uploadOfferingDocument(organizationId, offeringId, { name,
 
 export async function deleteOfferingDocument(organizationId, offeringId, documentId) {
   await api.delete(`/organizations/${organizationId}/offerings/${offeringId}/documents/${documentId}`);
+}
+
+// ─── Ofertas (deals) ──────────────────────────────────────────────────────
+
+export async function listOrgDeals(organizationId) {
+  const { data } = await api.get(`/organizations/${organizationId}/deals`);
+  return data;
+}
+
+export async function listDeals(organizationId, offeringId) {
+  const { data } = await api.get(`/organizations/${organizationId}/offerings/${offeringId}/deals`);
+  return data;
+}
+
+export async function createDeal(organizationId, offeringId, payload) {
+  const { data } = await api.post(
+    `/organizations/${organizationId}/offerings/${offeringId}/deals`,
+    {
+      deal_price: payload.dealPrice,
+      original_price: payload.originalPrice || null,
+      currency_code: payload.currencyCode,
+      unit_code: payload.unitCode || null,
+      stock_quantity: payload.stockQuantity || null,
+      expires_at: payload.expiresAt || null,
+    },
+  );
+  return data.id;
+}
+
+export async function updateDealStock(organizationId, offeringId, dealId, stockRemaining) {
+  await api.put(
+    `/organizations/${organizationId}/offerings/${offeringId}/deals/${dealId}/stock`,
+    { stock_remaining: stockRemaining },
+  );
+}
+
+export async function cancelDeal(organizationId, offeringId, dealId) {
+  await api.post(
+    `/organizations/${organizationId}/offerings/${offeringId}/deals/${dealId}/cancel`,
+  );
 }
 
 export async function listOfferingAttributeValues(organizationId, offeringId) {

@@ -197,6 +197,7 @@ async def list_media(*, user_id: UUID, organization_id: UUID) -> list[dict]:
                 "alt_text": row.alt_text,
                 "sort_order": row.sort_order,
                 "url": public_url(bucket=MEDIA_BUCKET, path=row.storage_path),
+                "logo_shape": row.logo_shape,
             }
             for row in rows
         ]
@@ -210,6 +211,7 @@ async def upload_media(
     content: bytes,
     content_type: str,
     alt_text: str | None = None,
+    logo_shape: str | None = None,
 ) -> dict:
     if content_type not in _ALLOWED_IMAGE_TYPES:
         raise ProfileValidationError(f"Tipo de archivo no permitido: {content_type}")
@@ -254,6 +256,7 @@ async def upload_media(
             storage_path=storage_path,
             alt_text=alt_text,
             sort_order=0,
+            logo_shape=(logo_shape or "SQUARE") if media_type == "LOGO" else None,
         )
         await recompute_completion_pct(db, organization_id)
         media_id = media.id
@@ -268,7 +271,21 @@ async def upload_media(
         "id": media_id,
         "media_type": media_type,
         "url": public_url(bucket=MEDIA_BUCKET, path=storage_path),
+        "logo_shape": media.logo_shape,
     }
+
+
+async def set_logo_shape(
+    *, user_id: UUID, organization_id: UUID, media_id: UUID, shape: str
+) -> None:
+    async with session_for_user(user_id) as db:
+        await _require_permission(db, organization_id)
+        media = await profile_repo.get_media(
+            db, media_id, organization_id=organization_id
+        )
+        if media is None or media.media_type != "LOGO":
+            raise ProfileNotFoundError("Logo no encontrado")
+        media.logo_shape = shape
 
 
 async def delete_media(*, user_id: UUID, organization_id: UUID, media_id: UUID) -> None:
@@ -326,6 +343,37 @@ async def remove_industry(
             db, organization_id=organization_id, industry_id=industry_id
         )
         await recompute_completion_pct(db, organization_id)
+
+
+# ─── Giros SII ────────────────────────────────────────────────────────────────
+
+
+async def list_economic_activities(*, user_id: UUID, organization_id: UUID) -> list:
+    async with session_for_user(user_id) as db:
+        return list(await profile_repo.list_economic_activities(db, organization_id))
+
+
+async def set_economic_activity(
+    *, user_id: UUID, organization_id: UUID, sii_code: str, is_primary: bool
+) -> None:
+    async with session_for_user(user_id) as db:
+        await _require_permission(db, organization_id)
+        await profile_repo.upsert_economic_activity(
+            db,
+            organization_id=organization_id,
+            sii_code=sii_code,
+            is_primary=is_primary,
+        )
+
+
+async def remove_economic_activity(
+    *, user_id: UUID, organization_id: UUID, sii_code: str
+) -> None:
+    async with session_for_user(user_id) as db:
+        await _require_permission(db, organization_id)
+        await profile_repo.remove_economic_activity(
+            db, organization_id=organization_id, sii_code=sii_code
+        )
 
 
 # ─── Territorios ─────────────────────────────────────────────────────────────

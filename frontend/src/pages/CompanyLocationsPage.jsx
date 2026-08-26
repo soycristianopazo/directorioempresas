@@ -58,9 +58,13 @@ export default function CompanyLocationsPage() {
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
-    const [locs, cons] = await Promise.all([getLocations(activeOrg.id), getContacts(activeOrg.id)]);
-    setLocations(locs);
-    setContacts(cons);
+    try {
+      const [locs, cons] = await Promise.all([getLocations(activeOrg.id), getContacts(activeOrg.id)]);
+      setLocations(locs);
+      setContacts(cons);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las ubicaciones');
+    }
   }
 
   useEffect(() => {

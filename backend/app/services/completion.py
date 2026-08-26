@@ -1,7 +1,8 @@
-"""Recálculo de completitud de perfil.
+"""Recálculo de completitud de perfil y de publicaciones del catálogo.
 
-app.compute_completion_pct() (0027) es una función SQL pura — este módulo
-solo la invoca y persiste el resultado en organizations.completion_pct,
+app.compute_completion_pct() (0027) y app.compute_offering_completion_pct()
+(0091) son funciones SQL puras — este módulo solo las invoca y persiste el
+resultado en organizations.completion_pct / supplier_offerings.completion_pct,
 dentro de la MISMA transacción que la mutación que motivó el recálculo (para
 que quede atómico: si la mutación se revierte, el completion_pct calculado
 sobre datos ya-no-vigentes nunca se escribe).
@@ -43,3 +44,23 @@ async def recompute_completion_pct(session: AsyncSession, organization_id: UUID)
         session, organization_id, completion_pct
     )
     return completion_pct
+
+
+async def recompute_offering_completion_pct(
+    session: AsyncSession, offering_id: UUID
+) -> int:
+    # Mismo flush explícito que recompute_completion_pct: SessionLocal corre
+    # con autoflush=False, así que sin este flush la función SQL lee el
+    # estado ANTERIOR a la mutación (ej. una foto recién subida vía ORM que
+    # todavía no salió hacia Postgres).
+    await session.flush()
+    result = await session.execute(
+        text(
+            "update public.supplier_offerings "
+            "set completion_pct = app.compute_offering_completion_pct(:offering_id) "
+            "where id = :offering_id "
+            "returning completion_pct"
+        ),
+        {"offering_id": str(offering_id)},
+    )
+    return int(result.scalar_one())

@@ -8,18 +8,39 @@
   <div class="container">
     <h1>Encuentra proveedores</h1>
     <p>Filtra por categoría, industria y región para llegar directo a quien puede ayudarte.</p>
-    <form class="search-form" action="/discover" method="get">
-      <input type="text" name="q" placeholder="Ej. transporte de personal, EPP, mantención eléctrica" value="{{ q or '' }}" />
-      {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
-      {% if industry %}<input type="hidden" name="industry" value="{{ industry }}" />{% endif %}
-      {% if region %}<input type="hidden" name="region" value="{{ region }}" />{% endif %}
+    <form class="filter-bar" action="/discover" method="get">
+      <input
+        class="filter-bar__search"
+        type="text"
+        name="q"
+        placeholder="Ej. transporte de personal, EPP, mantención eléctrica"
+        value="{{ q or '' }}"
+      />
+
+      <select name="category" onchange="this.form.submit()">
+        <option value="">Toda categoría</option>
+        {% for f in facets.taxonomy_nodes %}
+        <option value="{{ f.value }}" {{ 'selected' if f.active }}>{{ f.label }} ({{ f.count }})</option>
+        {% endfor %}
+      </select>
+
+      <select name="industry" onchange="this.form.submit()">
+        <option value="">Toda industria</option>
+        {% for f in facets.industries %}
+        <option value="{{ f.value }}" {{ 'selected' if f.active }}>{{ f.label }} ({{ f.count }})</option>
+        {% endfor %}
+      </select>
+
+      <select name="region" onchange="this.form.submit()">
+        <option value="">Toda región</option>
+        {% for f in facets.admin_divisions %}
+        <option value="{{ f.value }}" {{ 'selected' if f.active }}>{{ f.label }} ({{ f.count }})</option>
+        {% endfor %}
+      </select>
+
       <button type="submit" class="btn btn-primary">Buscar</button>
     </form>
-  </div>
-</section>
 
-<div class="container discover-layout">
-  <aside>
     {% if active_filters %}
     <div class="active-filters">
       {% for f in active_filters %}
@@ -27,70 +48,90 @@
       {% endfor %}
     </div>
     {% endif %}
+  </div>
+</section>
 
-    <div class="facet-group">
-      <h3>Categoría</h3>
-      <ul class="facet-list">
-        {% for f in facets.taxonomy_nodes %}
-        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
-        {% endfor %}
-        {% if not facets.taxonomy_nodes %}<li><span class="count">Sin resultados para facetar.</span></li>{% endif %}
-      </ul>
-    </div>
+<div class="container discover-results">
+  <p class="results-count">{{ total }} resultado{{ 's' if total != 1 }}</p>
 
-    <div class="facet-group">
-      <h3>Industria</h3>
-      <ul class="facet-list">
-        {% for f in facets.industries %}
-        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
-        {% endfor %}
-      </ul>
-    </div>
-
-    <div class="facet-group">
-      <h3>Región</h3>
-      <ul class="facet-list">
-        {% for f in facets.admin_divisions %}
-        <li><a class="{{ 'active' if f.active }}" href="{{ f.url }}">{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
-        {% endfor %}
-      </ul>
-    </div>
-  </aside>
-
-  <div>
-    <p class="results-count">{{ total }} resultado{{ 's' if total != 1 }}</p>
-
+  <div class="result-grid">
     {% for r in results %}
     <a class="result-card" href="/proveedores/{{ r.organization_slug }}">
-      <p class="offering-name">{{ r.offering_name }}</p>
-      <p class="org-name">{{ r.trade_name or r.legal_name }}</p>
-      {% if r.short_description %}<p class="description">{{ r.short_description }}</p>{% endif %}
-      <div class="result-meta">
-        <span class="badge">{{ offering_type_labels.get(r.offering_type, r.offering_type) }}</span>
-        <span class="badge">{{ availability_labels.get(r.availability_status, r.availability_status) }}</span>
-        {% if r.pricing_is_public and r.price_type and r.price_type != 'ON_REQUEST' %}
-        <span class="badge">
-          {% if r.price_type == 'FROM' %}Desde {{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
-          {% if r.price_type == 'FIXED' %}{{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
-          {% if r.price_type == 'RANGE' %}{{ r.amount_min | money }}–{{ r.amount_max | money }} {{ r.currency_code or '' }}{% endif %}
-        </span>
-        {% endif %}
+      {% if r.image_url %}
+      <img class="result-card__image" src="{{ r.image_url }}" alt="{{ r.offering_name }}" loading="lazy" />
+      {% else %}
+      <div class="result-card__image result-card__image--placeholder" aria-hidden="true"></div>
+      {% endif %}
+      <div class="result-card__body">
+        {% if r.deal_price %}<span class="badge badge-deal">🔥 Oferta</span>{% endif %}
+        <p class="offering-name">{{ r.offering_name }}</p>
+        <p class="org-name">{{ r.trade_name or r.legal_name }}</p>
+        {% if r.short_description %}<p class="description">{{ r.short_description }}</p>{% endif %}
+        <div class="result-meta">
+          <span class="badge">{{ offering_type_labels.get(r.offering_type, r.offering_type) }}</span>
+          <span class="badge">{{ availability_labels.get(r.availability_status, r.availability_status) }}</span>
+          {% if r.is_accredited %}<span class="badge badge-accredited">✓ Acreditado</span>{% endif %}
+          {% if r.deal_price %}
+          <span class="badge badge-deal-price">
+            {% if r.deal_original_price %}<s>{{ r.deal_original_price | money }}</s>{% endif %}
+            {{ r.deal_price | money }} {{ r.deal_currency_code or '' }}
+          </span>
+          {% if r.deal_stock_remaining is not none %}
+          <span class="badge badge-deal-stock">Quedan {{ r.deal_stock_remaining }}</span>
+          {% elif r.deal_expires_at %}
+          <span class="badge badge-deal-countdown" data-countdown="{{ r.deal_expires_at.isoformat() }}">
+            Termina pronto
+          </span>
+          {% endif %}
+          {% elif r.pricing_is_public and r.price_type and r.price_type != 'ON_REQUEST' %}
+          <span class="badge">
+            {% if r.price_type == 'FROM' %}Desde {{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
+            {% if r.price_type == 'FIXED' %}{{ r.amount_min | money }} {{ r.currency_code or '' }}{% endif %}
+            {% if r.price_type == 'RANGE' %}{{ r.amount_min | money }}–{{ r.amount_max | money }} {{ r.currency_code or '' }}{% endif %}
+          </span>
+          {% endif %}
+        </div>
       </div>
     </a>
     {% endfor %}
-
-    {% if not results %}
-    <div class="empty-state">
-      <p>No encontramos resultados con estos filtros. Prueba con otra categoría o quita algunos filtros.</p>
-    </div>
-    {% endif %}
-
-    {% if total > page_size %}
-    <div class="pagination">
-      {% if page > 1 %}<a class="btn btn-outline" href="{{ prev_url }}">← Anterior</a>{% endif %}
-      {% if page * page_size < total %}<a class="btn btn-outline" href="{{ next_url }}">Siguiente →</a>{% endif %}
-    </div>
-    {% endif %}
   </div>
+
+  {% if not results %}
+  <div class="empty-state">
+    <p>No encontramos resultados con estos filtros. Prueba con otra categoría o quita algunos filtros.</p>
+  </div>
+  {% endif %}
+
+  {% if total > page_size %}
+  <div class="pagination">
+    {% if page > 1 %}<a class="btn btn-outline" href="{{ prev_url }}">← Anterior</a>{% endif %}
+    {% if page * page_size < total %}<a class="btn btn-outline" href="{{ next_url }}">Siguiente →</a>{% endif %}
+  </div>
+  {% endif %}
 </div>
+
+<script>
+  // Cuenta regresiva de las ofertas con fecha límite (badge-deal-countdown,
+  // data-countdown="<ISO 8601>") — solo texto, no bloquea el render de la
+  // página si algún dato viene raro.
+  (function () {
+    function render(el, msLeft) {
+      if (msLeft <= 0) { el.textContent = 'Termina en instantes'; return; }
+      const days = Math.floor(msLeft / 86400000);
+      const hours = Math.floor((msLeft % 86400000) / 3600000);
+      const mins = Math.floor((msLeft % 3600000) / 60000);
+      if (days > 0) el.textContent = `Termina en ${days}d ${hours}h`;
+      else if (hours > 0) el.textContent = `Termina en ${hours}h ${mins}m`;
+      else el.textContent = `Termina en ${mins}m`;
+    }
+    function tick() {
+      document.querySelectorAll('[data-countdown]').forEach((el) => {
+        const target = Date.parse(el.dataset.countdown);
+        if (!isNaN(target)) render(el, target - Date.now());
+      });
+    }
+    tick();
+    setInterval(tick, 60000);
+  })();
+</script>
 {% endblock %}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Gavel, Send, Upload } from 'lucide-react';
+import { Ban, Gavel, Send, Upload } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,9 +11,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
-import { getEvent } from '@/lib/sourcingApi';
 import { listQuotations } from '@/lib/quotationsApi';
 import { listAwards, proposeAward, publishAward } from '@/lib/awardsApi';
+import { declareVoid } from '@/lib/sourcingApi';
 
 const STATUS_VARIANT = {
   DRAFT: 'neutral',
@@ -34,8 +34,7 @@ const STATUS_LABEL = {
 export default function AwardWizardPage() {
   const { eventId } = useParams();
   const { activeOrg } = useAuth();
-  const [event, setEvent] = useState(null);
-  const [items, setItems] = useState([]);
+  const { event, items, reloadEvent } = useOutletContext();
   const [quotations, setQuotations] = useState([]);
   const [awards, setAwards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,15 +43,16 @@ export default function AwardWizardPage() {
   const [lines, setLines] = useState({});
 
   async function load() {
-    const [detail, qs, aw] = await Promise.all([
-      getEvent(activeOrg.id, eventId),
-      listQuotations(activeOrg.id, eventId),
-      listAwards(activeOrg.id, eventId),
-    ]);
-    setEvent(detail.event);
-    setItems(detail.items);
-    setQuotations(qs);
-    setAwards(aw);
+    try {
+      const [qs, aw] = await Promise.all([
+        listQuotations(activeOrg.id, eventId),
+        listAwards(activeOrg.id, eventId),
+      ]);
+      setQuotations(qs);
+      setAwards(aw);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar la información del proceso');
+    }
   }
 
   useEffect(() => {
@@ -104,8 +104,24 @@ export default function AwardWizardPage() {
       await publishAward(activeOrg.id, eventId, awardId);
       toast.success('Adjudicación publicada — proceso cerrado');
       await load();
+      await reloadEvent();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'No se pudo publicar');
+    }
+  }
+
+  async function handleDeclareVoid() {
+    const reason = window.prompt('Motivo de declarar desierta (opcional)');
+    if (reason === null) return;
+    if (!window.confirm('¿Declarar esta publicación como desierta? No se podrá adjudicar después.')) {
+      return;
+    }
+    try {
+      await declareVoid(activeOrg.id, eventId, reason || null);
+      toast.success('Publicación declarada desierta');
+      await reloadEvent();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo declarar desierta');
     }
   }
 
@@ -119,17 +135,14 @@ export default function AwardWizardPage() {
         <title>Adjudicación · Directorio de Empresas</title>
       </Helmet>
 
-      <div>
-        <Link
-          to={`/empresa/sourcing/${eventId}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          Volver al proceso
-        </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Adjudicación</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{event.name}</p>
-      </div>
+      {event.status === 'PUBLISHED' && awards.length === 0 && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" className="gap-1.5 text-destructive" onClick={handleDeclareVoid}>
+            <Ban className="size-3.5" />
+            Declarar desierta
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

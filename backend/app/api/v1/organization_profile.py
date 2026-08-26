@@ -15,10 +15,13 @@ from app.schemas.organization_profile import (
     CreateContactRequest,
     CreateLocationRequest,
     CreatedOut,
+    EconomicActivityOut,
     IndustryOut,
     LocationOut,
     MediaOut,
+    SetEconomicActivityRequest,
     SetIndustryRequest,
+    SetLogoShapeRequest,
     TerritoryOut,
     UpdateContactRequest,
     UpdateLocationRequest,
@@ -192,6 +195,7 @@ async def upload_media(
     user_id: CurrentUserId,
     media_type: str = Form(...),
     alt_text: str | None = Form(default=None),
+    logo_shape: str | None = Form(default=None),
     file: UploadFile = File(...),
 ) -> MediaOut:
     content = await file.read()
@@ -203,6 +207,7 @@ async def upload_media(
             content=content,
             content_type=file.content_type or "application/octet-stream",
             alt_text=alt_text,
+            logo_shape=logo_shape,
         )
     except profile_service.ProfileError as exc:
         raise _as_http_exception(exc) from exc
@@ -218,6 +223,28 @@ async def delete_media(
     try:
         await profile_service.delete_media(
             user_id=user_id, organization_id=organization_id, media_id=media_id
+        )
+    except profile_service.ProfileError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.put(
+    "/media/{media_id}/logo-shape",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def set_logo_shape(
+    organization_id: UUID,
+    media_id: UUID,
+    payload: SetLogoShapeRequest,
+    user_id: CurrentUserId,
+) -> None:
+    try:
+        await profile_service.set_logo_shape(
+            user_id=user_id,
+            organization_id=organization_id,
+            media_id=media_id,
+            shape=payload.shape,
         )
     except profile_service.ProfileError as exc:
         raise _as_http_exception(exc) from exc
@@ -259,6 +286,49 @@ async def remove_industry(
     try:
         await profile_service.remove_industry(
             user_id=user_id, organization_id=organization_id, industry_id=industry_id
+        )
+    except profile_service.ProfileError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+# ─── Giros SII ────────────────────────────────────────────────────────────────
+
+
+@router.get("/economic-activities", response_model=list[EconomicActivityOut])
+async def list_economic_activities(
+    organization_id: UUID, user_id: CurrentUserId
+) -> list[EconomicActivityOut]:
+    rows = await profile_service.list_economic_activities(
+        user_id=user_id, organization_id=organization_id
+    )
+    return [EconomicActivityOut.model_validate(r) for r in rows]
+
+
+@router.put(
+    "/economic-activities", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def set_economic_activity(
+    organization_id: UUID, payload: SetEconomicActivityRequest, user_id: CurrentUserId
+) -> None:
+    try:
+        await profile_service.set_economic_activity(
+            user_id=user_id, organization_id=organization_id, **payload.model_dump()
+        )
+    except profile_service.ProfileError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.delete(
+    "/economic-activities/{sii_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def remove_economic_activity(
+    organization_id: UUID, sii_code: str, user_id: CurrentUserId
+) -> None:
+    try:
+        await profile_service.remove_economic_activity(
+            user_id=user_id, organization_id=organization_id, sii_code=sii_code
         )
     except profile_service.ProfileError as exc:
         raise _as_http_exception(exc) from exc

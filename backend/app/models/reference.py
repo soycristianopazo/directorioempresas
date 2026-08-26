@@ -1,14 +1,22 @@
-"""countries, currencies, fx_rates, units_of_measure, languages."""
+"""countries, currencies, fx_rates, units_of_measure, languages,
+sii_economic_activities."""
 
 from __future__ import annotations
 
 from datetime import date, datetime
 
 from sqlalchemy import Numeric, SmallInteger, Text, text
-from sqlalchemy.dialects.postgresql import CHAR, TIMESTAMP
+from sqlalchemy.dialects.postgresql import CHAR, ENUM, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+
+SiiVatStatusEnum = ENUM(
+    "SI", "NO", "G", name="sii_vat_status", schema="app", create_type=False
+)
+SiiTaxCategoryEnum = ENUM(
+    "1", "2", "G", name="sii_tax_category", schema="app", create_type=False
+)
 
 
 class Country(Base):
@@ -86,6 +94,27 @@ class Language(Base):
 
     code: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class SiiEconomicActivity(Base):
+    """Código de actividad económica (giro) del SII — catálogo público."""
+
+    __tablename__ = "sii_economic_activities"
+
+    code: Mapped[str] = mapped_column(Text, primary_key=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    sector: Mapped[str] = mapped_column(Text, nullable=False)
+    subgroup: Mapped[str | None] = mapped_column(Text)
+    vat_affected: Mapped[str] = mapped_column(SiiVatStatusEnum, nullable=False)
+    tax_category: Mapped[str] = mapped_column(SiiTaxCategoryEnum, nullable=False)
     is_active: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
 
     created_at: Mapped[datetime] = mapped_column(

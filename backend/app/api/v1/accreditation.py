@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUserId
 from app.schemas.accreditation import (
+    CertificateOut,
     CreatedOut,
     EnrollmentDetailOut,
     EnrollmentOut,
@@ -40,8 +41,19 @@ def _as_http_exception(exc: accreditation_service.AccreditationError) -> HTTPExc
 
 
 @programs_router.get("", response_model=list[ProgramOut])
-async def list_programs(user_id: CurrentUserId) -> list[ProgramOut]:
-    rows = await accreditation_service.list_programs(user_id=user_id)
+async def list_programs(
+    user_id: CurrentUserId, for_organization_id: UUID | None = None
+) -> list[ProgramOut]:
+    """Sin for_organization_id: catálogo activo, orden alfabético (todas las
+    audiencias). Con for_organization_id: mismo catálogo, ordenado por
+    relevancia para esa organización (fase 9.4) — usado por el selector de
+    programa al crear/editar un sourcing_event."""
+    if for_organization_id is not None:
+        rows = await accreditation_service.list_programs_for_organization(
+            user_id=user_id, organization_id=for_organization_id
+        )
+    else:
+        rows = await accreditation_service.list_programs(user_id=user_id)
     return [ProgramOut.model_validate(r) for r in rows]
 
 
@@ -168,3 +180,38 @@ async def respond_to_observation(
         )
     except accreditation_service.AccreditationError as exc:
         raise _as_http_exception(exc) from exc
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/renew",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def renew_enrollment(
+    organization_id: UUID, enrollment_id: UUID, user_id: CurrentUserId
+) -> None:
+    try:
+        await accreditation_service.renew_enrollment(
+            user_id=user_id,
+            organization_id=organization_id,
+            enrollment_id=enrollment_id,
+        )
+    except accreditation_service.AccreditationError as exc:
+        raise _as_http_exception(exc) from exc
+
+
+@router.get(
+    "/enrollments/{enrollment_id}/certificate", response_model=CertificateOut
+)
+async def get_certificate(
+    organization_id: UUID, enrollment_id: UUID, user_id: CurrentUserId
+) -> CertificateOut:
+    try:
+        result = await accreditation_service.get_certificate(
+            user_id=user_id,
+            organization_id=organization_id,
+            enrollment_id=enrollment_id,
+        )
+    except accreditation_service.AccreditationError as exc:
+        raise _as_http_exception(exc) from exc
+    return CertificateOut(**result)

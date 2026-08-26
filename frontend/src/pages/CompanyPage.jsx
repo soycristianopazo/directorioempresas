@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { Image as ImageIcon, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getOrganization, publishOrganization, updateOrganization } from '@/lib/organizationsApi';
+import { getMedia, uploadMedia, deleteMedia, setLogoShape } from '@/lib/organizationProfileApi';
+import { ProfilePreviewDialog } from '@/components/ProfilePreviewDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +16,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
+
+const LOGO_SHAPE_OPTIONS = [
+  { value: 'SQUARE', label: 'Cuadrado' },
+  { value: 'HORIZONTAL', label: 'Horizontal' },
+];
 
 const VISIBILITY_OPTIONS = [
   { value: 'PRIVATE', label: 'Privado — solo mi equipo' },
@@ -50,6 +58,9 @@ export default function CompanyPage() {
   const { activeOrg, refresh } = useAuth();
   const [org, setOrg] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [media, setMedia] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
   const {
     register,
@@ -82,12 +93,66 @@ export default function CompanyPage() {
           visibility: data.visibility,
         });
       })
+      .catch((error) => {
+        if (cancelled) return;
+        toast.error(
+          error.response?.data?.detail || 'No se pudo cargar la información de la empresa'
+        );
+      })
       .finally(() => !cancelled && setLoading(false));
 
     return () => {
       cancelled = true;
     };
   }, [activeOrg, reset]);
+
+  async function loadMedia() {
+    try {
+      setMedia(await getMedia(activeOrg.id));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el logo');
+    }
+  }
+
+  useEffect(() => {
+    if (!activeOrg) return;
+    loadMedia();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrg?.id]);
+
+  async function handleLogoUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      await uploadMedia(activeOrg.id, { mediaType: 'LOGO', file });
+      toast.success('Logo actualizado');
+      await loadMedia();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo subir el logo');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleDeleteLogo(mediaId) {
+    try {
+      await deleteMedia(activeOrg.id, mediaId);
+      await loadMedia();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo eliminar');
+    }
+  }
+
+  async function handleLogoShapeChange(mediaId, shape) {
+    try {
+      await setLogoShape(activeOrg.id, mediaId, shape);
+      await loadMedia();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo actualizar la forma del logo');
+    }
+  }
 
   async function onSubmit(values) {
     try {
@@ -134,18 +199,75 @@ export default function CompanyPage() {
     );
   }
 
+  const logo = media.find((m) => m.media_type === 'LOGO');
+
   return (
     <div className="space-y-8">
       <Helmet>
         <title>Mi empresa · Directorio de Empresas</title>
       </Helmet>
 
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Mi empresa</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Estos datos alimentan tu perfil público y los filtros de búsqueda.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Mi empresa</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Estos datos alimentan tu perfil público y los filtros de búsqueda.
+          </p>
+        </div>
+        <ProfilePreviewDialog organizationId={activeOrg.id} />
       </header>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ImageIcon className="size-4 text-primary" />
+            Logo
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-4">
+          {logo ? (
+            <img src={logo.url} alt="Logo" className="size-16 rounded-lg border object-contain p-1" />
+          ) : (
+            <div className="flex size-16 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+              Sin logo
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={handleLogoUpload}
+              disabled={uploading}
+              className="max-w-xs"
+            />
+            {logo && (
+              <Button variant="ghost" size="sm" onClick={() => handleDeleteLogo(logo.id)}>
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+          </div>
+          {logo && (
+            <div className="flex items-center gap-1 rounded-lg border p-1">
+              {LOGO_SHAPE_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={(logo.logo_shape || 'SQUARE') === option.value ? 'primary' : 'ghost'}
+                  onClick={() => handleLogoShapeChange(logo.id, option.value)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+        <CardDescription className="-mt-2 px-5 pb-4">
+          Elige si tu logo es un isotipo cuadrado o un logotipo horizontal — así se ve bien en tu
+          perfil público en vez de quedar recortado o diminuto.
+        </CardDescription>
+      </Card>
 
       <Card>
         <CardHeader>

@@ -50,9 +50,23 @@ async def _require(db, organization_id: UUID, permission: str) -> None:
 
 
 async def _transition_invitation(
-    db, invitation, *, to_status: str, actor_id: UUID | None, reason: str | None
+    db,
+    invitation,
+    *,
+    to_status: str,
+    actor_id: UUID | None,
+    reason: str | None,
+    is_valid: bool | None = None,
 ) -> None:
-    if not await invitations_repo.is_valid_transition(db, invitation.status, to_status):
+    """`is_valid` permite que quien llama en loop (open_round/close_round)
+    precompute la validez por status DISTINTO una sola vez, en vez de que
+    cada participante repita la misma consulta a
+    sourcing_event_invitation_transitions."""
+    if is_valid is None:
+        is_valid = await invitations_repo.is_valid_transition(
+            db, invitation.status, to_status
+        )
+    if not is_valid:
         raise NegotiationValidationError(
             f"El proveedor con invitación en estado {invitation.status} "
             f"no puede pasar a {to_status}"
@@ -104,10 +118,20 @@ async def open_round(
             opened_by=user_id,
         )
 
-        for supplier_org_id in participant_supplier_organization_ids:
-            invitation = await invitations_repo.get_by_event_and_supplier(
-                db, sourcing_event_id, supplier_org_id
+        # Una sola query para las invitaciones de todos los participantes,
+        # en vez de una por proveedor.
+        invitation_by_org = {
+            inv.supplier_organization_id: inv
+            for inv in await invitations_repo.list_by_event_and_suppliers(
+                db, sourcing_event_id, participant_supplier_organization_ids
             )
+        }
+        # is_valid_transition solo depende del status de origen — se
+        # memoiza por status distinto en vez de repetirse por participante.
+        transition_cache: dict[str, bool] = {}
+
+        for supplier_org_id in participant_supplier_organization_ids:
+            invitation = invitation_by_org.get(supplier_org_id)
             if invitation is None:
                 raise NegotiationValidationError(
                     "Uno de los proveedores no tiene invitación en este evento"
@@ -118,12 +142,19 @@ async def open_round(
                 supplier_organization_id=supplier_org_id,
             )
             if invitation.status != "NEGOTIATING":
+                if invitation.status not in transition_cache:
+                    transition_cache[invitation.status] = (
+                        await invitations_repo.is_valid_transition(
+                            db, invitation.status, "NEGOTIATING"
+                        )
+                    )
                 await _transition_invitation(
                     db,
                     invitation,
                     to_status="NEGOTIATING",
                     actor_id=user_id,
                     reason="Ronda de negociación abierta",
+                    is_valid=transition_cache[invitation.status],
                 )
 
         round_id = round_.id
@@ -169,17 +200,32 @@ async def close_round(
         participants = await negotiations_repo.list_participants(
             db, negotiation_round_id
         )
-        for participant in participants:
-            invitation = await invitations_repo.get_by_event_and_supplier(
-                db, sourcing_event_id, participant.supplier_organization_id
+        invitation_by_org = {
+            inv.supplier_organization_id: inv
+            for inv in await invitations_repo.list_by_event_and_suppliers(
+                db,
+                sourcing_event_id,
+                [p.supplier_organization_id for p in participants],
             )
+        }
+        transition_cache: dict[str, bool] = {}
+
+        for participant in participants:
+            invitation = invitation_by_org.get(participant.supplier_organization_id)
             if invitation is not None and invitation.status == "NEGOTIATING":
+                if invitation.status not in transition_cache:
+                    transition_cache[invitation.status] = (
+                        await invitations_repo.is_valid_transition(
+                            db, invitation.status, "QUOTED"
+                        )
+                    )
                 await _transition_invitation(
                     db,
                     invitation,
                     to_status="QUOTED",
                     actor_id=user_id,
                     reason="Ronda cerrada, vuelve a comparación",
+                    is_valid=transition_cache[invitation.status],
                 )
 
         await negotiations_repo.update_round(

@@ -1,44 +1,45 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { toast } from 'sonner';
-import { Factory, Image as ImageIcon, MapPinned, Trash2 } from 'lucide-react';
+import { Factory, MapPinned, ShieldCheck, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { IndustrySelector } from '@/components/IndustrySelector';
+import { SiiActivitySelector } from '@/components/SiiActivitySelector';
 import { AdminDivisionSelector } from '@/components/AdminDivisionSelector';
 import {
   getOrganizationIndustries,
   setOrganizationIndustry,
   removeOrganizationIndustry,
+  getOrganizationEconomicActivities,
+  setOrganizationEconomicActivity,
+  removeOrganizationEconomicActivity,
   getOrganizationTerritories,
   addOrganizationTerritory,
   removeOrganizationTerritory,
-  getMedia,
-  uploadMedia,
-  deleteMedia,
 } from '@/lib/organizationProfileApi';
 
 export default function CompanyCoveragePage() {
   const { activeOrg } = useAuth();
   const [industries, setIndustries] = useState([]);
+  const [economicActivities, setEconomicActivities] = useState([]);
   const [territories, setTerritories] = useState([]);
-  const [media, setMedia] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef(null);
 
   async function loadAll() {
-    const [inds, terrs, mediaList] = await Promise.all([
-      getOrganizationIndustries(activeOrg.id),
-      getOrganizationTerritories(activeOrg.id),
-      getMedia(activeOrg.id),
-    ]);
-    setIndustries(inds);
-    setTerritories(terrs);
-    setMedia(mediaList);
+    try {
+      const [inds, activities, terrs] = await Promise.all([
+        getOrganizationIndustries(activeOrg.id),
+        getOrganizationEconomicActivities(activeOrg.id),
+        getOrganizationTerritories(activeOrg.id),
+      ]);
+      setIndustries(inds);
+      setEconomicActivities(activities);
+      setTerritories(terrs);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar la cobertura');
+    }
   }
 
   useEffect(() => {
@@ -66,6 +67,24 @@ export default function CompanyCoveragePage() {
     }
   }
 
+  async function handleAddEconomicActivity(activity) {
+    try {
+      await setOrganizationEconomicActivity(activeOrg.id, { sii_code: activity.sii_code });
+      await loadAll();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo agregar el giro');
+    }
+  }
+
+  async function handleRemoveEconomicActivity(siiCode) {
+    try {
+      await removeOrganizationEconomicActivity(activeOrg.id, siiCode);
+      await loadAll();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo quitar el giro');
+    }
+  }
+
   async function handleAddTerritory(divisionId) {
     try {
       await addOrganizationTerritory(activeOrg.id, divisionId);
@@ -85,33 +104,7 @@ export default function CompanyCoveragePage() {
     }
   }
 
-  async function handleLogoUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      await uploadMedia(activeOrg.id, { mediaType: 'LOGO', file });
-      toast.success('Logo actualizado');
-      await loadAll();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo subir el logo');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }
-
-  async function handleDeleteMedia(mediaId) {
-    try {
-      await deleteMedia(activeOrg.id, mediaId);
-      await loadAll();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo eliminar');
-    }
-  }
-
   if (!activeOrg) return null;
-  const logo = media.find((m) => m.media_type === 'LOGO');
 
   return (
     <div className="space-y-8">
@@ -129,39 +122,6 @@ export default function CompanyCoveragePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ImageIcon className="size-4 text-primary" />
-            Logo
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center gap-4">
-          {logo ? (
-            <img src={logo.url} alt="Logo" className="size-16 rounded-lg border object-contain p-1" />
-          ) : (
-            <div className="flex size-16 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
-              Sin logo
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              onChange={handleLogoUpload}
-              disabled={uploading}
-              className="max-w-xs"
-            />
-            {logo && (
-              <Button variant="ghost" size="sm" onClick={() => handleDeleteMedia(logo.id)}>
-                <Trash2 className="size-3.5" />
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
             <Factory className="size-4 text-primary" />
             Industrias que atiendes
           </CardTitle>
@@ -172,6 +132,29 @@ export default function CompanyCoveragePage() {
             <div className="h-24 animate-pulse rounded-lg bg-secondary" />
           ) : (
             <IndustrySelector selectedIds={selectedIndustryIds} onChange={handleIndustryChange} />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-primary" />
+            Giros SII registrados
+          </CardTitle>
+          <CardDescription>
+            Los códigos de actividad económica que tu empresa tiene registrados con el SII.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="h-24 animate-pulse rounded-lg bg-secondary" />
+          ) : (
+            <SiiActivitySelector
+              selected={economicActivities}
+              onSelect={handleAddEconomicActivity}
+              onRemove={handleRemoveEconomicActivity}
+            />
           )}
         </CardContent>
       </Card>

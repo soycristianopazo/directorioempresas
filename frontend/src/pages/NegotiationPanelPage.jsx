@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,14 +12,13 @@ import { Label } from '@/components/ui/label';
 import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
 import { ConversationPanel } from '@/components/ConversationPanel';
-import { getEvent } from '@/lib/sourcingApi';
 import { listQuotations } from '@/lib/quotationsApi';
 import { listRounds, openRound, closeRound } from '@/lib/negotiationsApi';
 
 export default function NegotiationPanelPage() {
   const { eventId } = useParams();
   const { activeOrg } = useAuth();
-  const [event, setEvent] = useState(null);
+  const { event } = useOutletContext();
   const [quotations, setQuotations] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,14 +32,16 @@ export default function NegotiationPanelPage() {
   });
 
   async function load() {
-    const [detail, qs, rs] = await Promise.all([
-      getEvent(activeOrg.id, eventId),
-      listQuotations(activeOrg.id, eventId),
-      listRounds(activeOrg.id, eventId),
-    ]);
-    setEvent(detail.event);
-    setQuotations(qs);
-    setRounds(rs);
+    try {
+      const [qs, rs] = await Promise.all([
+        listQuotations(activeOrg.id, eventId),
+        listRounds(activeOrg.id, eventId),
+      ]);
+      setQuotations(qs);
+      setRounds(rs);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el panel de negociación');
+    }
   }
 
   useEffect(() => {
@@ -103,19 +104,9 @@ export default function NegotiationPanelPage() {
       </Helmet>
 
       <div className="flex items-center justify-between">
-        <div>
-          <Link
-            to={`/empresa/sourcing/${eventId}`}
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="size-3.5" />
-            Volver al proceso
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Negociación</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Para aclaraciones (sin cambio de monto) usa la mensajería del proceso, más abajo.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Para aclaraciones (sin cambio de monto) usa la mensajería del proceso, más abajo.
+        </p>
         <Button className="gap-1.5" onClick={() => setShowOpenForm((v) => !v)}>
           {showOpenForm ? <X className="size-4" /> : <Plus className="size-4" />}
           {showOpenForm ? 'Cancelar' : 'Abrir ronda'}

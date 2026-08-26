@@ -5,14 +5,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.admin_division import AdminDivision
 from app.models.requirements import (
     Requirement,
     RequirementDocument,
     RequirementItem,
     RequirementLocation,
+    RequirementTag,
 )
 
 
@@ -94,6 +96,31 @@ async def add_location(session: AsyncSession, **fields: object) -> RequirementLo
     return location
 
 
+async def get_location(
+    session: AsyncSession, location_id: UUID
+) -> RequirementLocation | None:
+    return await session.get(RequirementLocation, location_id)
+
+
+async def remove_location(session: AsyncSession, location: RequirementLocation) -> None:
+    await session.delete(location)
+
+
+async def list_locations_with_names(
+    session: AsyncSession, requirement_id: UUID
+) -> list[dict]:
+    result = await session.execute(
+        select(RequirementLocation.id, RequirementLocation.admin_division_id, AdminDivision.name)
+        .join(AdminDivision, AdminDivision.id == RequirementLocation.admin_division_id)
+        .where(RequirementLocation.requirement_id == requirement_id)
+        .order_by(AdminDivision.name)
+    )
+    return [
+        {"id": row.id, "admin_division_id": row.admin_division_id, "name": row.name}
+        for row in result
+    ]
+
+
 async def list_documents(
     session: AsyncSession, requirement_id: UUID
 ) -> list[RequirementDocument]:
@@ -110,3 +137,22 @@ async def add_document(session: AsyncSession, **fields: object) -> RequirementDo
     session.add(document)
     await session.flush()
     return document
+
+
+async def list_tags(session: AsyncSession, requirement_id: UUID) -> list[str]:
+    result = await session.execute(
+        select(RequirementTag.tag)
+        .where(RequirementTag.requirement_id == requirement_id)
+        .order_by(RequirementTag.tag)
+    )
+    return list(result.scalars())
+
+
+async def set_tags(
+    session: AsyncSession, requirement_id: UUID, tags: list[str]
+) -> None:
+    await session.execute(
+        delete(RequirementTag).where(RequirementTag.requirement_id == requirement_id)
+    )
+    for tag in tags:
+        session.add(RequirementTag(requirement_id=requirement_id, tag=tag))

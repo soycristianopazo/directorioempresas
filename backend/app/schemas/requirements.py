@@ -78,9 +78,29 @@ class RequirementLocationOut(BaseModel):
 
     id: UUID
     admin_division_id: UUID
+    name: str
+
+
+class SetRequirementTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class RequirementDocumentOut(BaseModel):
+    id: UUID
+    name: str
+    url: str | None
+    created_at: datetime | None = None
+
+
+class UploadRequirementDocumentResponse(BaseModel):
+    id: UUID
+    name: str
+    url: str | None
 
 
 class RequirementDetailOut(BaseModel):
     requirement: RequirementOut
     items: list[RequirementItemOut]
     locations: list[RequirementLocationOut]
+    documents: list[RequirementDocumentOut]
+    tags: list[str]

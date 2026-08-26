@@ -153,7 +153,14 @@ _ELIGIBLE_BY_CRITERION_SQL = {
         select so.id as offering_id
         from public.supplier_offerings so
         join public.accreditation_enrollments ae
-          on ae.organization_id = so.organization_id and ae.program_id = cast(:program_id as uuid)
+          on ae.organization_id = so.organization_id
+         and (
+           ae.program_id = cast(:program_id as uuid)
+           or ae.program_id in (
+             select accepted_program_id from public.accreditation_program_equivalences
+             where program_id = cast(:program_id as uuid)
+           )
+         )
         where so.id = any (cast(:candidate_offering_ids as uuid[]))
           and ae.status = 'ACCREDITED'
           and (ae.valid_until is null or ae.valid_until >= current_date)
@@ -583,6 +590,36 @@ async def fetch_accreditation_status(
             "select organization_id, status, completion_pct, valid_until "
             "from public.accreditation_enrollments "
             "where organization_id = any (cast(:org_ids as uuid[])) and program_id = cast(:program_id as uuid)"
+        ),
+        {"org_ids": [str(i) for i in organization_ids], "program_id": str(program_id)},
+    )
+    return {str(row.organization_id): dict(row._mapping) for row in result}
+
+
+async def fetch_equivalent_accreditation_status(
+    session: AsyncSession, *, organization_ids: list[UUID], program_id: UUID | None
+) -> dict[str, dict]:
+    """organization_id → estado de acreditación ACCREDITED vigente en
+    CUALQUIER programa que el dueño de program_id declaró equivalente
+    (accreditation_program_equivalences, fase 9.1) — homologación cruzada:
+    estar acreditado en un programa homologado también satisface program_id.
+    Alimenta la rama accredited_via_equivalent de compute_accreditation_fit()
+    en services/matching.py. Hermana de fetch_accreditation_status()."""
+    if not organization_ids or program_id is None:
+        return {}
+    result = await session.execute(
+        text(
+            "select distinct on (ae.organization_id) "
+            "  ae.organization_id, ae.status, ae.completion_pct, ae.valid_until "
+            "from public.accreditation_enrollments ae "
+            "where ae.organization_id = any (cast(:org_ids as uuid[])) "
+            "and ae.program_id in ("
+            "  select accepted_program_id from public.accreditation_program_equivalences "
+            "  where program_id = cast(:program_id as uuid)"
+            ") "
+            "and ae.status = 'ACCREDITED' "
+            "and (ae.valid_until is null or ae.valid_until >= current_date) "
+            "order by ae.organization_id, ae.valid_until desc nulls last"
         ),
         {"org_ids": [str(i) for i in organization_ids], "program_id": str(program_id)},
     )

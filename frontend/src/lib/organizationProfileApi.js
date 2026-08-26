@@ -51,10 +51,11 @@ export async function getMedia(organizationId) {
   return data;
 }
 
-export async function uploadMedia(organizationId, { mediaType, file, altText }) {
+export async function uploadMedia(organizationId, { mediaType, file, altText, logoShape }) {
   const form = new FormData();
   form.append('media_type', mediaType);
   if (altText) form.append('alt_text', altText);
+  if (logoShape) form.append('logo_shape', logoShape);
   form.append('file', file);
   const { data } = await api.post(`/organizations/${organizationId}/media`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -64,6 +65,10 @@ export async function uploadMedia(organizationId, { mediaType, file, altText }) 
 
 export async function deleteMedia(organizationId, mediaId) {
   await api.delete(`/organizations/${organizationId}/media/${mediaId}`);
+}
+
+export async function setLogoShape(organizationId, mediaId, shape) {
+  await api.put(`/organizations/${organizationId}/media/${mediaId}/logo-shape`, { shape });
 }
 
 // ─── Industrias ──────────────────────────────────────────────────────────────
@@ -79,6 +84,21 @@ export async function setOrganizationIndustry(organizationId, payload) {
 
 export async function removeOrganizationIndustry(organizationId, industryId) {
   await api.delete(`/organizations/${organizationId}/industries/${industryId}`);
+}
+
+// ─── Giros SII ────────────────────────────────────────────────────────────────
+
+export async function getOrganizationEconomicActivities(organizationId) {
+  const { data } = await api.get(`/organizations/${organizationId}/economic-activities`);
+  return data;
+}
+
+export async function setOrganizationEconomicActivity(organizationId, payload) {
+  await api.put(`/organizations/${organizationId}/economic-activities`, payload);
+}
+
+export async function removeOrganizationEconomicActivity(organizationId, siiCode) {
+  await api.delete(`/organizations/${organizationId}/economic-activities/${siiCode}`);
 }
 
 // ─── Territorios ─────────────────────────────────────────────────────────────

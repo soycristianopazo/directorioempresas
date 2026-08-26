@@ -49,24 +49,28 @@ export default function TeamPage() {
   const [canManage, setCanManage] = useState(true);
 
   async function loadAll() {
-    // listTeam y listAssignableRoles solo exigen member.read (VIEWER lo
-    // tiene); listPendingInvitations exige member.manage y por eso se aísla:
-    // un 403 ahí no debe tumbar el resto de la página, solo ocultar la
-    // sección de invitaciones.
-    const [team, roles] = await Promise.all([listTeam(activeOrg.id), listAssignableRoles(activeOrg.id)]);
-    setTeam(team);
-    setRoles(roles);
-
     try {
-      setInvitations(await listPendingInvitations(activeOrg.id));
-      setCanManage(true);
-    } catch (error) {
-      if (error.response?.status === 403) {
-        setCanManage(false);
-        setInvitations([]);
-      } else {
-        throw error;
+      // listTeam y listAssignableRoles solo exigen member.read (VIEWER lo
+      // tiene); listPendingInvitations exige member.manage y por eso se aísla:
+      // un 403 ahí no debe tumbar el resto de la página, solo ocultar la
+      // sección de invitaciones.
+      const [team, roles] = await Promise.all([listTeam(activeOrg.id), listAssignableRoles(activeOrg.id)]);
+      setTeam(team);
+      setRoles(roles);
+
+      try {
+        setInvitations(await listPendingInvitations(activeOrg.id));
+        setCanManage(true);
+      } catch (error) {
+        if (error.response?.status === 403) {
+          setCanManage(false);
+          setInvitations([]);
+        } else {
+          throw error;
+        }
       }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el equipo');
     }
   }
 

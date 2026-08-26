@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.accreditation import (
@@ -66,6 +66,46 @@ async def get_program_by_code(
         select(AccreditationProgram).where(AccreditationProgram.code == code)
     )
     return result.scalar_one_or_none()
+
+
+async def list_programs_for_organization(
+    session: AsyncSession, organization_id: UUID
+) -> list[dict]:
+    """Mismo catálogo activo que list_programs(), pero ordenado por
+    relevancia para esta organización: primero los programas cuyo
+    applies_to_industry_id/applies_to_taxonomy_node_id calzan con lo que la
+    organización ya declaró (organization_industries / las categorías de sus
+    supplier_offerings). No oculta el resto — postular o exigir fuera de
+    categoría sigue permitido, no hay ningún requisito real que lo prohíba."""
+    result = await session.execute(
+        text(
+            """
+            select ap.*
+            from public.accreditation_programs ap
+            left join lateral (
+              select
+                (ap.applies_to_industry_id is not null and exists (
+                  select 1 from public.organization_industries oi
+                  where oi.organization_id = cast(:organization_id as uuid)
+                    and oi.industry_id = ap.applies_to_industry_id
+                )) as industry_match,
+                (ap.applies_to_taxonomy_node_id is not null and exists (
+                  select 1 from public.offering_taxonomy_nodes otn
+                  join public.supplier_offerings so on so.id = otn.offering_id
+                  where so.organization_id = cast(:organization_id as uuid)
+                    and otn.node_id = ap.applies_to_taxonomy_node_id
+                )) as taxonomy_match
+            ) rel on true
+            where ap.is_active
+            order by
+              (case when rel.industry_match then 0 else 1 end
+               + case when rel.taxonomy_match then 0 else 1 end),
+              ap.name
+            """
+        ),
+        {"organization_id": str(organization_id)},
+    )
+    return [dict(row._mapping) for row in result]
 
 
 async def list_requirement_groups(
@@ -149,7 +189,8 @@ async def list_enrollments(session: AsyncSession, organization_id: UUID) -> list
         text(
             "select ae.id, ae.program_id, ae.status, ae.completion_pct, ae.valid_from, "
             "       ae.valid_until, ae.submitted_at, ae.decided_at, "
-            "       ap.code as program_code, ap.name as program_name "
+            "       ap.code as program_code, ap.name as program_name, "
+            "       ap.owner_scope as program_owner_scope "
             "from public.accreditation_enrollments ae "
             "join public.accreditation_programs ap on ap.id = ae.program_id "
             "where ae.organization_id = :org_id "
@@ -160,11 +201,35 @@ async def list_enrollments(session: AsyncSession, organization_id: UUID) -> list
     return [dict(row._mapping) for row in result]
 
 
+async def list_accredited_expiring(
+    session: AsyncSession, organization_id: UUID
+) -> list[AccreditationEnrollment]:
+    """Enrollments ACCREDITED de esta organización cuya vigencia anual
+    (valid_until) ya pasó — candidatos a la transición ACCREDITED→EXPIRED
+    modelada en accreditation_status_transitions (0035) pero nunca disparada
+    hasta ahora. Se evalúa en cada lectura (services._expire_due), no vía
+    job en background — mismo criterio que la vigencia de fulfillments."""
+    result = await session.execute(
+        select(AccreditationEnrollment).where(
+            AccreditationEnrollment.organization_id == organization_id,
+            AccreditationEnrollment.status == "ACCREDITED",
+            AccreditationEnrollment.valid_until.is_not(None),
+            AccreditationEnrollment.valid_until < func.current_date(),
+        )
+    )
+    return list(result.scalars())
+
+
 async def list_review_queue(
     session: AsyncSession, *, status: str | None = None
 ) -> list[dict]:
-    """Cola de revisión. RLS ya restringe el SELECT a quien tenga
-    platform.review_accreditation (o admin) — ver 0038_fase5_rls.sql."""
+    """Cola de revisión del revisor de PLATAFORMA. RLS ya restringe el SELECT
+    a quien tenga platform.review_accreditation (o admin) — ver
+    0038_fase5_rls.sql — pero eso no basta para excluir programas
+    owner_scope=ORGANIZATION: sin el filtro explícito acá, la cola de
+    plataforma se ensuciaría con programas de comprador en cuanto RLS deje
+    pasar esas filas (fase 9, ver app.is_own_program_reviewer en 0079).
+    Su contraparte de programa propio es list_own_review_queue()."""
     query = (
         "select ae.id, ae.organization_id, ae.program_id, ae.status, ae.completion_pct, "
         "       ae.submitted_at, ae.created_at, "
@@ -173,10 +238,37 @@ async def list_review_queue(
         "from public.accreditation_enrollments ae "
         "join public.accreditation_programs ap on ap.id = ae.program_id "
         "join public.organizations o on o.id = ae.organization_id "
-        "where (cast(:status as text) is null or ae.status = cast(:status as app.accreditation_enrollment_status)) "
+        "where ap.owner_scope = 'PLATFORM' "
+        "and (cast(:status as text) is null or ae.status = cast(:status as app.accreditation_enrollment_status)) "
         "order by ae.submitted_at nulls last, ae.created_at desc"
     )
     result = await session.execute(text(query), {"status": status})
+    return [dict(row._mapping) for row in result]
+
+
+async def list_own_review_queue(
+    session: AsyncSession, *, owner_organization_id: UUID, status: str | None = None
+) -> list[dict]:
+    """Cola de revisión del revisor de PROGRAMA PROPIO (fase 9.3) — solo
+    enrollments de programas owner_scope=ORGANIZATION que pertenecen a
+    owner_organization_id."""
+    query = (
+        "select ae.id, ae.organization_id, ae.program_id, ae.status, ae.completion_pct, "
+        "       ae.submitted_at, ae.created_at, "
+        "       ap.code as program_code, ap.name as program_name, "
+        "       o.legal_name as organization_name "
+        "from public.accreditation_enrollments ae "
+        "join public.accreditation_programs ap on ap.id = ae.program_id "
+        "join public.organizations o on o.id = ae.organization_id "
+        "where ap.owner_scope = 'ORGANIZATION' "
+        "and ap.owner_organization_id = cast(:owner_organization_id as uuid) "
+        "and (cast(:status as text) is null or ae.status = cast(:status as app.accreditation_enrollment_status)) "
+        "order by ae.submitted_at nulls last, ae.created_at desc"
+    )
+    result = await session.execute(
+        text(query),
+        {"owner_organization_id": str(owner_organization_id), "status": status},
+    )
     return [dict(row._mapping) for row in result]
 
 
@@ -312,20 +404,34 @@ async def list_section_progress(
     return [dict(row._mapping) for row in result]
 
 
-async def upsert_section_progress(
-    session: AsyncSession, *, enrollment_id: UUID, group_id: UUID, completion_pct: int
+async def upsert_section_progress_bulk(
+    session: AsyncSession, *, enrollment_id: UUID, sections: dict[UUID, int]
 ) -> None:
+    """Un solo round trip para todas las secciones del programa.
+
+    `_recompute_completion` corre en casi cada escritura del módulo
+    (postular, subir evidencia, revisar) — antes hacía un upsert por sección
+    (N round trips a una BD remota), acá es uno solo vía `unnest` con las
+    dos listas en paralelo.
+    """
+    if not sections:
+        return
+    group_ids = [str(group_id) for group_id in sections]
+    completion_pcts = list(sections.values())
     await session.execute(
         text(
-            "insert into public.accreditation_section_progress (enrollment_id, group_id, completion_pct, updated_at) "
-            "values (:enrollment_id, :group_id, :completion_pct, now()) "
+            "insert into public.accreditation_section_progress "
+            "(enrollment_id, group_id, completion_pct, updated_at) "
+            "select :enrollment_id, g.group_id, g.completion_pct, now() "
+            "from unnest(cast(:group_ids as uuid[]), cast(:completion_pcts as int[])) "
+            "as g(group_id, completion_pct) "
             "on conflict (enrollment_id, group_id) "
             "do update set completion_pct = excluded.completion_pct, updated_at = now()"
         ),
         {
             "enrollment_id": str(enrollment_id),
-            "group_id": str(group_id),
-            "completion_pct": completion_pct,
+            "group_ids": group_ids,
+            "completion_pcts": completion_pcts,
         },
     )
 

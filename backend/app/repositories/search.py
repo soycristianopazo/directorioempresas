@@ -277,14 +277,13 @@ async def search_offerings(
         else "0"
     )
 
-    count_result = await session.execute(
-        text(
-            f"select count(*) from public.supplier_search_index si where {where_clause}"
-        ),
-        params,
-    )
-    total = int(count_result.scalar_one())
-
+    # count(*) y la página de resultados iban en 2 consultas secuenciales —
+    # con la latencia de red hacia la base remota (~0.6-0.9s por round trip
+    # medido en vivo, ver hallazgo de la página /discover) eso duplicaba el
+    # costo de red por nada. count(*) over() trae el total en la MISMA fila
+    # que cada resultado, un solo round trip. Si la página no trae filas
+    # (offset más allá del total, o 0 resultados) no hay de dónde leer el
+    # total — pero en ese caso el total real de esta misma búsqueda es 0.
     params["limit"] = page_size
     params["offset"] = max(page - 1, 0) * page_size
     result = await session.execute(
@@ -298,11 +297,64 @@ async def search_offerings(
               si.completion_pct,
               op.price_type, op.amount_min, op.amount_max, op.currency_code,
               op.unit_code, op.is_public as pricing_is_public,
+              comuna.name as comuna, coalesce(acc.is_accredited, false) as is_accredited,
+              img.storage_path as image_path,
+              deal.deal_price, deal.original_price as deal_original_price,
+              deal.currency_code as deal_currency_code,
+              deal.stock_quantity as deal_stock_quantity,
+              deal.stock_remaining as deal_stock_remaining,
+              deal.expires_at as deal_expires_at,
+              count(*) over() as total_count,
               {rank_expr} as rank
             from public.supplier_search_index si
             join public.supplier_offerings so on so.id = si.offering_id
             join public.organizations o on o.id = si.organization_id
             left join public.offering_pricing op on op.offering_id = si.offering_id
+            left join lateral (
+              select om.storage_path
+              from public.offering_media om
+              where om.offering_id = si.offering_id
+              order by om.sort_order
+              limit 1
+            ) img on true
+            left join lateral (
+              select od.deal_price, od.original_price, od.currency_code,
+                     od.stock_quantity, od.stock_remaining, od.expires_at
+              from public.offering_deals od
+              where od.offering_id = si.offering_id
+                and od.cancelled_at is null
+                and (od.expires_at is null or od.expires_at > now())
+                and (od.stock_quantity is null or od.stock_remaining > 0)
+              order by od.created_at desc
+              limit 1
+            ) deal on true
+            left join lateral (
+              select ol.admin_division_id
+              from public.organization_locations ol
+              where ol.organization_id = o.id and ol.is_active
+              order by ol.is_headquarters desc, ol.created_at
+              limit 1
+            ) hq_loc on true
+            left join lateral (
+              with recursive ancestors as (
+                select id, parent_id, level_name, name
+                from public.admin_divisions where id = hq_loc.admin_division_id
+                union all
+                select ad.id, ad.parent_id, ad.level_name, ad.name
+                from public.admin_divisions ad
+                join ancestors a on ad.id = a.parent_id
+              )
+              select name from ancestors where level_name = 'COMUNA' limit 1
+            ) comuna on true
+            left join lateral (
+              select exists (
+                select 1 from public.organization_badges ob
+                join public.badge_definitions bd on bd.id = ob.badge_id
+                where ob.organization_id = o.id
+                  and ob.revoked_at is null
+                  and bd.code = 'ACREDITADO_BASE'
+              ) as is_accredited
+            ) acc on true
             where {where_clause}
             order by rank desc, si.completion_pct desc, si.updated_at desc
             limit :limit offset :offset
@@ -311,6 +363,9 @@ async def search_offerings(
         params,
     )
     rows = [dict(row._mapping) for row in result]
+    total = rows[0]["total_count"] if rows else 0
+    for row in rows:
+        del row["total_count"]
     return rows, total
 
 
@@ -336,30 +391,47 @@ async def facet_counts(
     )
     where_clause = " and ".join(conditions)
 
-    async def _facet(
-        dimension_column: str, label_table: str, label_col: str = "name"
-    ) -> list[dict]:
-        result = await session.execute(
-            text(
-                f"""
-                select node.{label_col} as label, node.id as value, count(*) as count
-                from public.supplier_search_index si
-                join public.{label_table} node on node.id = any(si.{dimension_column})
-                where {where_clause}
-                group by node.{label_col}, node.id
-                order by count desc
-                limit 20
-                """
-            ),
-            params,
-        )
-        return [dict(row._mapping) for row in result]
-
-    return {
-        "taxonomy_nodes": await _facet("taxonomy_node_ids", "taxonomy_nodes"),
-        "industries": await _facet("industry_ids", "industries"),
-        "admin_divisions": await _facet("admin_division_ids", "admin_divisions"),
+    # Un solo round trip para las 3 dimensiones (antes: 3 consultas
+    # secuenciales) — con latencia de red no trivial hacia la base, cada
+    # round trip evitado importa tanto como el plan de la consulta misma.
+    result = await session.execute(
+        text(
+            f"""
+            select 'taxonomy_nodes' as dimension, node.name as label, node.id as value, count(*) as count
+            from public.supplier_search_index si
+            join public.taxonomy_nodes node on node.id = any(si.taxonomy_node_ids)
+            where {where_clause}
+            group by node.name, node.id
+            union all
+            select 'industries', node.name, node.id, count(*)
+            from public.supplier_search_index si
+            join public.industries node on node.id = any(si.industry_ids)
+            where {where_clause}
+            group by node.name, node.id
+            union all
+            select 'admin_divisions', node.name, node.id, count(*)
+            from public.supplier_search_index si
+            join public.admin_divisions node on node.id = any(si.admin_division_ids)
+            where {where_clause}
+            group by node.name, node.id
+            """
+        ),
+        params,
+    )
+    facets: dict[str, list[dict]] = {
+        "taxonomy_nodes": [],
+        "industries": [],
+        "admin_divisions": [],
     }
+    for row in result:
+        r = row._mapping
+        facets[r["dimension"]].append(
+            {"label": r["label"], "value": r["value"], "count": r["count"]}
+        )
+    for key in facets:
+        facets[key].sort(key=lambda f: f["count"], reverse=True)
+        facets[key] = facets[key][:20]
+    return facets
 
 
 # ─── Analítica ──────────────────────────────────────────────────────────────
@@ -397,18 +469,26 @@ async def record_impressions(
     session: AsyncSession, offerings: list[tuple[UUID, UUID]]
 ) -> None:
     """`offerings`: pares (offering_id, organization_id) mostrados en una
-    página de resultados. Incrementa el agregado del día vía upsert."""
-    for offering_id, organization_id in offerings:
-        await session.execute(
-            text(
-                "insert into public.search_impressions "
-                "(day, organization_id, offering_id, impression_count) "
-                "values (current_date, :org_id, :offering_id, 1) "
-                "on conflict (day, organization_id, offering_id) "
-                "do update set impression_count = search_impressions.impression_count + 1"
-            ),
-            {"org_id": str(organization_id), "offering_id": str(offering_id)},
-        )
+    página de resultados. Incrementa el agregado del día vía upsert — un
+    solo round trip con unnest() en vez de un insert por fila (antes: hasta
+    page_size round trips secuenciales, el costo dominante de una búsqueda
+    con latencia de red no trivial hacia la base)."""
+    if not offerings:
+        return
+    offering_ids = [str(offering_id) for offering_id, _ in offerings]
+    organization_ids = [str(organization_id) for _, organization_id in offerings]
+    await session.execute(
+        text(
+            "insert into public.search_impressions "
+            "(day, organization_id, offering_id, impression_count) "
+            "select current_date, org_id, offering_id, 1 "
+            "from unnest(cast(:org_ids as uuid[]), cast(:offering_ids as uuid[])) "
+            "as pairs(org_id, offering_id) "
+            "on conflict (day, organization_id, offering_id) "
+            "do update set impression_count = search_impressions.impression_count + 1"
+        ),
+        {"org_ids": organization_ids, "offering_ids": offering_ids},
+    )
 
 
 async def _seen_today(
@@ -464,25 +544,50 @@ async def record_offering_views(
     viewer_organization_id: UUID | None,
     visitor_hash: str | None,
 ) -> None:
-    for offering_id in offering_ids:
-        is_unique = True
-        if visitor_hash:
-            is_unique = not await _seen_today(
-                session, "offering_views", "offering_id", offering_id, visitor_hash
-            )
-        await session.execute(
+    """Antes: un `_seen_today` + un insert POR offering — para el catálogo de
+    un proveedor, hasta 2×N round trips secuenciales contra la base remota,
+    disparados en background por cada visita a la ficha (app/api/public.py).
+    Ahora: 1 select batch para saber qué offerings ya vio este visitante hoy
+    + 1 insert multi-fila (executemany) — 2 round trips sin importar N."""
+    if not offering_ids:
+        return
+    # str(...), no uuid.UUID, para comparar contra asyncpg: SQL crudo sobre
+    # una columna uuid devuelve el tipo propio de asyncpg, no uuid.UUID (ver
+    # comentario de run_matching en services/matching.py) — normalizar a str
+    # de los dos lados es lo único que garantiza que el `in` de abajo compare
+    # lo mismo.
+    seen_ids: set[str] = set()
+    if visitor_hash:
+        result = await session.execute(
             text(
-                "insert into public.offering_views "
-                "(offering_id, organization_id, viewer_organization_id, visitor_hash, is_unique) "
-                "values (:offering_id, :org_id, :viewer_org_id, :visitor_hash, :is_unique)"
+                "select offering_id from public.offering_views "
+                "where offering_id = any(cast(:ids as uuid[])) "
+                "and visitor_hash = :visitor_hash and created_at >= current_date"
             ),
             {
-                "offering_id": str(offering_id),
-                "org_id": str(organization_id),
-                "viewer_org_id": (
-                    str(viewer_organization_id) if viewer_organization_id else None
-                ),
+                "ids": [str(i) for i in offering_ids],
                 "visitor_hash": visitor_hash,
-                "is_unique": is_unique,
             },
         )
+        seen_ids = {str(row.offering_id) for row in result}
+
+    rows = [
+        {
+            "offering_id": str(offering_id),
+            "org_id": str(organization_id),
+            "viewer_org_id": (
+                str(viewer_organization_id) if viewer_organization_id else None
+            ),
+            "visitor_hash": visitor_hash,
+            "is_unique": str(offering_id) not in seen_ids,
+        }
+        for offering_id in offering_ids
+    ]
+    await session.execute(
+        text(
+            "insert into public.offering_views "
+            "(offering_id, organization_id, viewer_organization_id, visitor_hash, is_unique) "
+            "values (:offering_id, :org_id, :viewer_org_id, :visitor_hash, :is_unique)"
+        ),
+        rows,
+    )

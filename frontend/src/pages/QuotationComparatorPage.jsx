@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Play, Trophy } from 'lucide-react';
+import { Play, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,21 +19,25 @@ export default function QuotationComparatorPage() {
   const [running, setRunning] = useState(false);
 
   async function load() {
-    const data = await getComparator(activeOrg.id, eventId);
-    setComparison(data);
-    if (data?.ranking?.length) {
-      const ids = [...new Set(data.ranking.map((r) => r.supplier_organization_id).filter(Boolean))];
-      const entries = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const org = await getOrganization(id);
-            return [id, org.trade_name || org.legal_name];
-          } catch {
-            return [id, `Proveedor ${String(id).slice(0, 8)}`];
-          }
-        }),
-      );
-      setOrgNames(Object.fromEntries(entries));
+    try {
+      const data = await getComparator(activeOrg.id, eventId);
+      setComparison(data);
+      if (data?.ranking?.length) {
+        const ids = [...new Set(data.ranking.map((r) => r.supplier_organization_id).filter(Boolean))];
+        const entries = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const org = await getOrganization(id);
+              return [id, org.trade_name || org.legal_name];
+            } catch {
+              return [id, `Proveedor ${String(id).slice(0, 8)}`];
+            }
+          }),
+        );
+        setOrgNames(Object.fromEntries(entries));
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el comparador de cotizaciones');
     }
   }
 
@@ -67,17 +71,7 @@ export default function QuotationComparatorPage() {
         <title>Comparador de ofertas · Directorio de Empresas</title>
       </Helmet>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <Link
-            to={`/empresa/sourcing/${eventId}`}
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="size-3.5" />
-            Volver al proceso
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Comparador de ofertas</h1>
-        </div>
+      <div className="flex items-center justify-end">
         <Button onClick={handleRun} disabled={running} className="gap-1.5">
           <Play className="size-4" />
           {running ? 'Ejecutando…' : 'Ejecutar comparador'}

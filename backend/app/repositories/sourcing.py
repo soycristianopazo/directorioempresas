@@ -46,15 +46,52 @@ async def next_event_code(session: AsyncSession, *, event_type: str, year: int) 
     return f"{event_type}-{year}-{n:04d}"
 
 
-async def list_events(
+async def list_events_with_stage(
     session: AsyncSession, organization_id: UUID
-) -> list[SourcingEvent]:
+) -> list[dict]:
+    """Como `list_events`, pero agrega `stage`: en qué de las 5 pestañas del
+    workspace (publicar/match/evaluacion/negociacion/adjudicacion, mismas
+    claves que `tabsFor()` en SourcingEventLayout.jsx) está el evento hoy.
+    `sourcing_events.status` no alcanza para esto — PUBLISHED cubre tanto
+    "recién publicado" como "en plena negociación", así que la etapa se
+    infiere por EXISTS contra las tablas donde cada etapa deja rastro
+    (evaluation_assignments, negotiation_rounds, awards) en una sola
+    consulta, no N+1 por evento."""
     result = await session.execute(
-        select(SourcingEvent)
-        .where(SourcingEvent.organization_id == organization_id)
-        .order_by(SourcingEvent.created_at.desc())
+        text(
+            """
+            select
+                se.id, se.organization_id, se.requirement_id, se.event_code,
+                se.name, se.description, se.event_type, se.visibility,
+                se.bid_mode, se.status, se.void_reason, se.currency_code,
+                se.estimated_amount, se.requires_nda,
+                se.requires_accreditation_program_id, se.max_invitations,
+                se.matching_weights, se.published_at, se.bid_opened_at,
+                se.bid_opened_by, se.created_at,
+                case
+                    when se.status = 'AWARDED' or exists (
+                        select 1 from public.awards a
+                        where a.sourcing_event_id = se.id
+                    ) then 'adjudicacion'
+                    when exists (
+                        select 1 from public.negotiation_rounds nr
+                        where nr.sourcing_event_id = se.id
+                    ) then 'negociacion'
+                    when exists (
+                        select 1 from public.evaluation_assignments ea
+                        where ea.sourcing_event_id = se.id
+                    ) then 'evaluacion'
+                    when se.status = 'PUBLISHED' then 'match'
+                    else 'publicar'
+                end as stage
+            from public.sourcing_events se
+            where se.organization_id = :org_id
+            order by se.created_at desc
+            """
+        ),
+        {"org_id": str(organization_id)},
     )
-    return list(result.scalars())
+    return [dict(row) for row in result.mappings()]
 
 
 async def get_event(session: AsyncSession, event_id: UUID) -> SourcingEvent | None:

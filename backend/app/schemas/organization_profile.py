@@ -24,6 +24,7 @@ ContactType = Literal[
     "ADMINISTRADOR_CONTRATO",
     "SOPORTE_TECNICO",
 ]
+LogoShape = Literal["SQUARE", "HORIZONTAL"]
 
 
 class CreateLocationRequest(BaseModel):
@@ -88,6 +89,11 @@ class MediaOut(BaseModel):
     alt_text: str | None = None
     sort_order: int = 0
     url: str
+    logo_shape: LogoShape | None = None
+
+
+class SetLogoShapeRequest(BaseModel):
+    shape: LogoShape
 
 
 class SetIndustryRequest(BaseModel):
@@ -102,6 +108,19 @@ class IndustryOut(BaseModel):
     industry_id: UUID
     name: str
     years_experience: int | None
+    is_primary: bool
+
+
+class SetEconomicActivityRequest(BaseModel):
+    sii_code: str = Field(min_length=6, max_length=6)
+    is_primary: bool = False
+
+
+class EconomicActivityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sii_code: str
+    description: str
     is_primary: bool
 
 

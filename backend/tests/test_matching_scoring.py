@@ -163,6 +163,34 @@ def test_accreditation_fit_avl_approved():
     assert score == 1.00
 
 
+def test_accreditation_fit_equivalent_program():
+    """Fase 9.1 — homologación cruzada: acreditado en un programa que el
+    dueño de program_id declaró equivalente da 0.90, nunca 1.00 (reservado a
+    la acreditación directa) — la rama que docs/03-MATCHING-ENGINE.md §H.4.5
+    documentaba sin implementar desde fase 6."""
+    score, _ = matching.compute_accreditation_fit(
+        status=None,
+        valid_until=None,
+        completion_pct=None,
+        today=date(2026, 1, 1),
+        accredited_via_equivalent=True,
+    )
+    assert score == 0.90
+
+
+def test_accreditation_fit_direct_wins_over_equivalent():
+    """La acreditación DIRECTA en program_id sigue ganando aunque también
+    exista una equivalencia — 1.00, no 0.90."""
+    score, _ = matching.compute_accreditation_fit(
+        status="ACCREDITED",
+        valid_until=date(2027, 1, 1),
+        completion_pct=100,
+        today=date(2026, 1, 1),
+        accredited_via_equivalent=True,
+    )
+    assert score == 1.00
+
+
 # ─── performance_fit / responsiveness_fit (§H.4.6/7 — arranque neutral) ────────
 
 

@@ -30,6 +30,15 @@ async def get_profile(session: AsyncSession, user_id: UUID) -> Profile | None:
     return result.scalar_one_or_none()
 
 
+async def update_profile(profile: Profile, **fields: object) -> None:
+    for key, value in fields.items():
+        setattr(profile, key, value)
+
+
+async def update_password(user: User, password_hash: str) -> None:
+    user.password_hash = password_hash
+
+
 async def create_user_with_profile(
     session: AsyncSession,
     *,

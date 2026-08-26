@@ -23,6 +23,18 @@ SourcingInvitationStatusEnum = ENUM(
     "WITHDRAWN",
     "DISQUALIFIED",
     "EXPIRED",
+    # Agregados por 0065 (fase 8.7) al tipo de Postgres — nunca se agregaron
+    # acá. Bug real encontrado en vivo: SQLAlchemy valida cada valor leído
+    # contra ESTA lista de Python, no contra el tipo real de la base, así
+    # que cualquier fila con uno de estos cuatro estados (negociación o
+    # cierre de evento con adjudicación) reventaba con
+    # "LookupError: 'NEGOTIATING' is not among the defined enum values" al
+    # leerla — no al escribirla, que pasa por SQL crudo y nunca pasó por
+    # esta validación.
+    "SHORTLISTED",
+    "NEGOTIATING",
+    "AWARDED",
+    "NOT_AWARDED",
     name="sourcing_invitation_status",
     schema="app",
     create_type=False,

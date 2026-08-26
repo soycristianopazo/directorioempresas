@@ -136,6 +136,9 @@ class OrganizationMedia(Base):
     sort_order: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default="0"
     )
+    # Solo aplica a media_type=LOGO — 'SQUARE' u 'HORIZONTAL'. NULL para el
+    # resto de media_types y para logos subidos antes de esta columna.
+    logo_shape: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
@@ -181,6 +184,26 @@ class OrganizationIndustry(Base):
         UUID(as_uuid=True), ForeignKey("industries.id"), primary_key=True
     )
     years_experience: Mapped[int | None] = mapped_column(SmallInteger)
+    is_primary: Mapped[bool] = mapped_column(
+        nullable=False, server_default=text("false")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class OrganizationEconomicActivity(Base):
+    __tablename__ = "organization_economic_activities"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sii_code: Mapped[str] = mapped_column(
+        Text, ForeignKey("sii_economic_activities.code"), primary_key=True
+    )
     is_primary: Mapped[bool] = mapped_column(
         nullable=False, server_default=text("false")
     )

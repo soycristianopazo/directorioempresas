@@ -8,6 +8,16 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
+def _validate_password_strength(value: str) -> str:
+    if not any(c.islower() for c in value):
+        raise ValueError("Incluye una minúscula")
+    if not any(c.isupper() for c in value):
+        raise ValueError("Incluye una mayúscula")
+    if not any(c.isdigit() for c in value):
+        raise ValueError("Incluye un número")
+    return value
+
+
 class RegisterRequest(BaseModel):
     first_name: str = Field(min_length=2, max_length=80)
     last_name: str = Field(min_length=2, max_length=80)
@@ -17,13 +27,7 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, value: str) -> str:
-        if not any(c.islower() for c in value):
-            raise ValueError("Incluye una minúscula")
-        if not any(c.isupper() for c in value):
-            raise ValueError("Incluye una mayúscula")
-        if not any(c.isdigit() for c in value):
-            raise ValueError("Incluye un número")
-        return value
+        return _validate_password_strength(value)
 
 
 class LoginRequest(BaseModel):
@@ -71,6 +75,21 @@ class RegisterResponse(TokenResponse):
 class MeResponse(BaseModel):
     user: UserOut
     is_platform_admin: bool
+
+
+class UpdateProfileRequest(BaseModel):
+    first_name: str = Field(min_length=2, max_length=80)
+    last_name: str = Field(min_length=2, max_length=80)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        return _validate_password_strength(value)
 
 
 class AuditContext(BaseModel):

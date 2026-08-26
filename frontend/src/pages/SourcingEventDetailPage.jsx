@@ -1,38 +1,46 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Ban,
   ClipboardCheck,
-  FileSearch,
-  Gavel,
+  Factory,
   HelpCircle,
   Lock,
+  MapPinned,
   Plus,
   Receipt,
-  Scale,
   Send,
+  ShieldCheck,
+  Tags,
   Trash2,
   Unlock,
   UserPlus,
-  Users,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
-import { CategorySelector } from '@/components/CategorySelector';
+import { AdminDivisionSelector } from '@/components/AdminDivisionSelector';
+import { SingleTreePicker } from '@/components/SingleTreePicker';
 import { ConversationPanel } from '@/components/ConversationPanel';
 import { getCertificationTypes } from '@/lib/credentialsApi';
 import { listPrograms } from '@/lib/accreditationApi';
-import { getIndustries } from '@/lib/taxonomyApi';
+import { getTaxonomyTree, getIndustries } from '@/lib/taxonomyApi';
 import { getAdminDivisions } from '@/lib/referenceApi';
-import { addCriterion, addItem, deleteCriterion, getEvent, publishEvent } from '@/lib/sourcingApi';
+import {
+  getRequirement,
+  updateRequirement,
+  addRequirementLocation,
+  removeRequirementLocation,
+} from '@/lib/requirementsApi';
+import { addCriterion, addItem, deleteCriterion, updateEvent } from '@/lib/sourcingApi';
 import { disqualifyInvitation, inviteSupplier, listInvitations } from '@/lib/invitationsApi';
 import { answerQuestion, listQuestions, publishAnswer } from '@/lib/qaApi';
 import { listQuotations, openBids } from '@/lib/quotationsApi';
@@ -95,42 +103,44 @@ const CRITERION_TYPES = [
 export default function SourcingEventDetailPage() {
   const { eventId } = useParams();
   const { activeOrg } = useAuth();
-  const [detail, setDetail] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // El layout (SourcingEventLayout) ya trae event/items/criteria en una
+  // sola consulta compartida por todas las pestañas — pedirlo de nuevo acá
+  // duplicaba la llamada más pesada del workspace en cada carga.
+  const { event, items, criteria, reloadEvent } = useOutletContext();
   const [invitations, setInvitations] = useState([]);
+  const [loadingInvitations, setLoadingInvitations] = useState(true);
 
-  async function loadAll() {
-    const d = await getEvent(activeOrg.id, eventId);
-    setDetail(d);
-    if (d.event.status === 'PUBLISHED') {
-      setInvitations(await listInvitations(activeOrg.id, eventId));
-    } else {
-      setInvitations([]);
+  async function loadInvitations() {
+    try {
+      if (event.status === 'PUBLISHED') {
+        setInvitations(await listInvitations(activeOrg.id, eventId));
+      } else {
+        setInvitations([]);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las invitaciones');
     }
   }
 
   useEffect(() => {
     if (!activeOrg) return;
-    setLoading(true);
-    loadAll().finally(() => setLoading(false));
+    setLoadingInvitations(true);
+    loadInvitations().finally(() => setLoadingInvitations(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrg?.id, eventId]);
+  }, [activeOrg?.id, eventId, event.status]);
 
-  async function onPublish() {
-    try {
-      await publishEvent(activeOrg.id, eventId);
-      toast.success('Proceso publicado');
-      await loadAll();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'No se pudo publicar');
-    }
+  async function loadAll() {
+    // reloadEvent y loadInvitations no dependen entre sí (loadInvitations lee
+    // el `event.status` ya renderizado, no el que reloadEvent está por
+    // traer) — esperarlas en serie solo sumaba latencia cada vez que se
+    // agregaba un ítem/criterio/invitación.
+    await Promise.all([reloadEvent(), loadInvitations()]);
   }
 
-  if (!activeOrg || loading || !detail) {
+  if (!activeOrg || loadingInvitations) {
     return <div className="h-32 animate-pulse rounded-lg bg-secondary" />;
   }
 
-  const { event, items, criteria } = detail;
   const isDraft = event.status === 'DRAFT';
 
   return (
@@ -139,25 +149,24 @@ export default function SourcingEventDetailPage() {
         <title>{event.name} · Directorio de Empresas</title>
       </Helmet>
 
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{event.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {event.event_code} · {items.length} línea(s) · {criteria.length} criterio(s)
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">{event.status}</Badge>
-          {isDraft && <Button onClick={onPublish}>Publicar</Button>}
-          <Link to={`/empresa/sourcing/${eventId}/resultados`}>
-            <Button variant="outline">
-              <FileSearch className="size-4" />
-              Ver matches
-            </Button>
-          </Link>
-        </div>
-      </header>
+      <p className="text-sm text-muted-foreground">
+        {items.length} línea(s) · {criteria.length} criterio(s)
+      </p>
 
+      <AccreditationRequirementCard
+        organizationId={activeOrg.id}
+        eventId={eventId}
+        event={event}
+        isDraft={isDraft}
+        onChanged={loadAll}
+      />
+      {event.requirement_id && (
+        <MatchingGuidanceCard
+          organizationId={activeOrg.id}
+          requirementId={event.requirement_id}
+          isDraft={isDraft}
+        />
+      )}
       <ItemsCard organizationId={activeOrg.id} eventId={eventId} items={items} onChanged={loadAll} />
       <CriteriaCard
         organizationId={activeOrg.id}
@@ -176,7 +185,6 @@ export default function SourcingEventDetailPage() {
           />
           <QuestionsCard organizationId={activeOrg.id} eventId={eventId} />
           <QuotationsCard organizationId={activeOrg.id} eventId={eventId} event={event} />
-          <EvaluationAndAwardCard eventId={eventId} />
           <ConversationPanel
             organizationId={activeOrg.id}
             contextType="SOURCING_EVENT"
@@ -191,37 +199,199 @@ export default function SourcingEventDetailPage() {
   );
 }
 
-function EvaluationAndAwardCard({ eventId }) {
+function AccreditationRequirementCard({ organizationId, eventId, event, isDraft, onChanged }) {
+  const [programs, setPrograms] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    listPrograms({ forOrganizationId: organizationId })
+      .then(setPrograms)
+      .catch((error) => {
+        toast.error(error.response?.data?.detail || 'No se pudieron cargar los programas');
+      });
+  }, [organizationId]);
+
+  const platformProgram = programs.find((p) => p.owner_scope === 'PLATFORM');
+  const required = !!event.requires_accreditation_program_id;
+
+  async function onSelect(nextRequired) {
+    if (nextRequired === required || saving) return;
+    if (nextRequired && !platformProgram) {
+      toast.error('No hay un programa de acreditación de plataforma configurado');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateEvent(organizationId, eventId, event, {
+        requires_accreditation_program_id: nextRequired ? platformProgram.id : null,
+      });
+      toast.success('Requisito de acreditación actualizado');
+      await onChanged();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo actualizar el requisito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Evaluación, negociación y adjudicación</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="size-4 text-primary" />
+          Requisito de acreditación
+        </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
-        <Link to={`/empresa/sourcing/${eventId}/comite`}>
-          <Button variant="outline" className="gap-1.5">
-            <Users className="size-4" />
-            Comité de evaluación
-          </Button>
-        </Link>
-        <Link to={`/empresa/sourcing/${eventId}/comparador`}>
-          <Button variant="outline" className="gap-1.5">
-            <Scale className="size-4" />
-            Comparador
-          </Button>
-        </Link>
-        <Link to={`/empresa/sourcing/${eventId}/negociacion`}>
-          <Button variant="outline" className="gap-1.5">
-            <ClipboardCheck className="size-4" />
-            Negociación
-          </Button>
-        </Link>
-        <Link to={`/empresa/sourcing/${eventId}/adjudicacion`}>
-          <Button variant="outline" className="gap-1.5">
-            <Gavel className="size-4" />
-            Adjudicación
-          </Button>
-        </Link>
+      <CardContent className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant={required ? 'default' : 'outline'}
+          disabled={!isDraft || saving}
+          onClick={() => onSelect(true)}
+        >
+          Acreditado
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={!required ? 'default' : 'outline'}
+          disabled={!isDraft || saving}
+          onClick={() => onSelect(false)}
+        >
+          No acreditado
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Categoría + Industria + Territorio agrupados como en CompanyCoveragePage
+ * ("Cobertura e industrias") — las tres viven en la necesidad ligada al
+ * evento (`requirements`), no en el evento mismo: Categoría/Industria son
+ * selectores en cascada de un solo valor (mismo componente que usa la
+ * creación de la publicación), Territorio reusa AdminDivisionSelector +
+ * chips removibles igual que Cobertura. */
+function MatchingGuidanceCard({ organizationId, requirementId, isDraft }) {
+  const [requirement, setRequirement] = useState(null);
+  const [locations, setLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    try {
+      const detail = await getRequirement(organizationId, requirementId);
+      setRequirement(detail.requirement);
+      setLocations(detail.locations);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar la cobertura de la necesidad');
+    }
+  }
+
+  useEffect(() => {
+    setLoading(true);
+    load().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organizationId, requirementId]);
+
+  async function save(overrides) {
+    setSaving(true);
+    try {
+      await updateRequirement(organizationId, requirementId, requirement, overrides);
+      await load();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo actualizar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAddLocation(adminDivisionId) {
+    try {
+      await addRequirementLocation(organizationId, requirementId, adminDivisionId);
+      toast.success('Cobertura agregada');
+      await load();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo agregar');
+    }
+  }
+
+  async function handleRemoveLocation(locationId) {
+    try {
+      await removeRequirementLocation(organizationId, requirementId, locationId);
+      await load();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo eliminar');
+    }
+  }
+
+  if (loading || !requirement) {
+    return <div className="h-32 animate-pulse rounded-lg bg-secondary" />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Tags className="size-4 text-primary" />
+          Categoría, industria y territorio
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-xs text-muted-foreground">
+          Opcional — mientras más completo, mejor el match por experiencia y cobertura.
+        </p>
+
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1.5">
+            <Tags className="size-3.5" />
+            Categoría
+          </Label>
+          <SingleTreePicker
+            loader={getTaxonomyTree}
+            value={requirement.primary_taxonomy_node_id}
+            onChange={(id) => save({ primary_taxonomy_node_id: id })}
+            placeholder="Cualquiera"
+            subPlaceholder="Subcategoría (opcional)"
+          />
+        </div>
+
+        <div className="space-y-1.5 border-t pt-4">
+          <Label className="flex items-center gap-1.5">
+            <Factory className="size-3.5" />
+            Industria
+          </Label>
+          <SingleTreePicker
+            loader={getIndustries}
+            value={requirement.industry_id}
+            onChange={(id) => save({ industry_id: id })}
+            placeholder="Cualquiera"
+            subPlaceholder="Subindustria (opcional)"
+          />
+        </div>
+
+        <div className="space-y-2 border-t pt-4">
+          <Label className="flex items-center gap-1.5">
+            <MapPinned className="size-3.5" />
+            Territorio ({locations.length})
+          </Label>
+          <div className="flex flex-wrap gap-2">
+            {locations.map((l) => (
+              <Badge key={l.id} variant="neutral" className="gap-1.5">
+                {l.name}
+                {isDraft && (
+                  <button onClick={() => handleRemoveLocation(l.id)} aria-label={`Quitar ${l.name}`}>
+                    <Trash2 className="size-3" />
+                  </button>
+                )}
+              </Badge>
+            ))}
+            {locations.length === 0 && (
+              <p className="text-sm text-muted-foreground">Sin cobertura declarada.</p>
+            )}
+          </div>
+          {isDraft && <AdminDivisionSelector onAdd={handleAddLocation} disabled={saving} />}
+        </div>
       </CardContent>
     </Card>
   );
@@ -230,7 +400,6 @@ function EvaluationAndAwardCard({ eventId }) {
 function ItemsCard({ organizationId, eventId, items, onChanged }) {
   const [description, setDescription] = useState('');
   const [quantity, setQuantity] = useState('');
-  const [taxonomyNodes, setTaxonomyNodes] = useState([]);
 
   async function onAdd() {
     if (!description || !quantity) return;
@@ -238,12 +407,10 @@ function ItemsCard({ organizationId, eventId, items, onChanged }) {
       await addItem(organizationId, eventId, {
         description,
         quantity: Number(quantity),
-        taxonomyNodeId: taxonomyNodes[0]?.node_id,
       });
       toast.success('Línea agregada');
       setDescription('');
       setQuantity('');
-      setTaxonomyNodes([]);
       await onChanged();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'No se pudo agregar la línea');
@@ -270,93 +437,127 @@ function ItemsCard({ organizationId, eventId, items, onChanged }) {
           )}
         </ul>
 
-        <div className="space-y-3 border-t pt-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-            <div className="space-y-1.5">
-              <Label htmlFor="item-description">Descripción</Label>
-              <Input
-                id="item-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="item-quantity">Cantidad</Label>
-              <Input
-                id="item-quantity"
-                type="number"
-                min={1}
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-              />
-            </div>
+        <div className="grid gap-3 border-t pt-4 sm:grid-cols-[1fr_auto]">
+          <div className="space-y-1.5">
+            <Label htmlFor="item-description">Descripción</Label>
+            <Input
+              id="item-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-              Categoría (opcional, guía el matching)
-            </p>
-            <CategorySelector selected={taxonomyNodes} onChange={setTaxonomyNodes} allowPrimary={false} />
+          <div className="space-y-1.5">
+            <Label htmlFor="item-quantity">Cantidad</Label>
+            <Input
+              id="item-quantity"
+              type="number"
+              min={1}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
           </div>
-          <Button size="sm" onClick={onAdd}>
-            <Plus className="size-4" />
-            Agregar línea
-          </Button>
+          <div className="sm:col-span-2">
+            <Button size="sm" onClick={onAdd}>
+              <Plus className="size-4" />
+              Agregar línea
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-const emptyCriterionForm = {
-  criterionType: 'ACCREDITATION',
-  requirementLevel: 'MUST_HAVE',
-  description: '',
-  accreditationProgramId: '',
-  certificationTypeId: '',
-  adminDivisionId: '',
-  maxMobilizationDays: '',
-  industryId: '',
-  minYears: '',
-  minCapacity: '',
-};
+function emptyEntry() {
+  return {
+    requirementLevel: 'MUST_HAVE',
+    description: '',
+    accreditationProgramId: '',
+    certificationTypeId: '',
+    adminDivisionId: '',
+    maxMobilizationDays: '',
+    industryId: '',
+    minYears: '',
+    minCapacity: '',
+  };
+}
 
+/** Antes elegía un solo tipo de criterio a la vez ("Tipo de criterio" en
+ * SelectNative); ahora los tipos son checkboxes y cada uno marcado abre su
+ * propia mini-ficha con su Nivel (MUST/NICE) y sus campos específicos —
+ * "Agregar criterios" llama addCriterion() una vez por tipo marcado. */
 function CriteriaCard({ organizationId, eventId, criteria, onChanged }) {
-  const [form, setForm] = useState(emptyCriterionForm);
+  const [entries, setEntries] = useState({});
   const [programs, setPrograms] = useState([]);
   const [certTypes, setCertTypes] = useState([]);
   const [industries, setIndustries] = useState([]);
   const [divisions, setDivisions] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    listPrograms().then(setPrograms);
-    getCertificationTypes().then(setCertTypes);
-    getIndustries().then(setIndustries);
-    getAdminDivisions({ country: 'CL' }).then(setDivisions);
+    listPrograms()
+      .then(setPrograms)
+      .catch((error) => {
+        toast.error(error.response?.data?.detail || 'No se pudieron cargar los programas');
+      });
+    getCertificationTypes()
+      .then(setCertTypes)
+      .catch((error) => {
+        toast.error(error.response?.data?.detail || 'No se pudieron cargar las certificaciones');
+      });
+    getIndustries()
+      .then(setIndustries)
+      .catch((error) => {
+        toast.error(error.response?.data?.detail || 'No se pudieron cargar las industrias');
+      });
+    getAdminDivisions({ country: 'CL' })
+      .then(setDivisions)
+      .catch((error) => {
+        toast.error(error.response?.data?.detail || 'No se pudieron cargar las divisiones administrativas');
+      });
   }, []);
 
-  function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
+  function toggleType(type, checked) {
+    setEntries((prev) => {
+      const next = { ...prev };
+      if (checked) next[type] = emptyEntry();
+      else delete next[type];
+      return next;
+    });
   }
 
+  function updateEntry(type, field, value) {
+    setEntries((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }));
+  }
+
+  const types = Object.keys(entries);
+
   async function onAdd() {
+    if (types.length === 0) return;
+    setSubmitting(true);
     try {
-      await addCriterion(organizationId, eventId, {
-        criterionType: form.criterionType,
-        requirementLevel: form.requirementLevel,
-        description: form.description || null,
-        accreditationProgramId: form.accreditationProgramId || undefined,
-        certificationTypeId: form.certificationTypeId || undefined,
-        adminDivisionId: form.adminDivisionId || undefined,
-        maxMobilizationDays: form.maxMobilizationDays ? Number(form.maxMobilizationDays) : undefined,
-        industryId: form.industryId || undefined,
-        minYears: form.minYears ? Number(form.minYears) : undefined,
-        minCapacity: form.minCapacity ? Number(form.minCapacity) : undefined,
-      });
-      toast.success('Criterio agregado');
-      setForm(emptyCriterionForm);
+      for (const type of types) {
+        const f = entries[type];
+        await addCriterion(organizationId, eventId, {
+          criterionType: type,
+          requirementLevel: f.requirementLevel,
+          description: f.description || null,
+          accreditationProgramId: f.accreditationProgramId || undefined,
+          certificationTypeId: f.certificationTypeId || undefined,
+          adminDivisionId: f.adminDivisionId || undefined,
+          maxMobilizationDays: f.maxMobilizationDays ? Number(f.maxMobilizationDays) : undefined,
+          industryId: f.industryId || undefined,
+          minYears: f.minYears ? Number(f.minYears) : undefined,
+          minCapacity: f.minCapacity ? Number(f.minCapacity) : undefined,
+        });
+      }
+      toast.success(types.length > 1 ? 'Criterios agregados' : 'Criterio agregado');
+      setEntries({});
       await onChanged();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'No se pudo agregar el criterio');
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -382,7 +583,7 @@ function CriteriaCard({ organizationId, eventId, criteria, onChanged }) {
               className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"
             >
               <div>
-                <Badge variant="outline" className="mr-2">
+                <Badge variant="neutral" className="mr-2">
                   {c.requirement_level === 'MUST_HAVE' ? 'MUST' : 'NICE'}
                 </Badge>
                 {CRITERION_TYPES.find((t) => t.value === c.criterion_type)?.label}
@@ -398,156 +599,174 @@ function CriteriaCard({ organizationId, eventId, criteria, onChanged }) {
           )}
         </ul>
 
-        <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Tipo de criterio</Label>
-            <SelectNative
-              value={form.criterionType}
-              onChange={(e) => update('criterionType', e.target.value)}
-            >
-              {CRITERION_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </SelectNative>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Nivel</Label>
-            <SelectNative
-              value={form.requirementLevel}
-              onChange={(e) => update('requirementLevel', e.target.value)}
-            >
-              <option value="MUST_HAVE">MUST — obligatorio</option>
-              <option value="NICE_TO_HAVE">NICE — deseable</option>
-            </SelectNative>
-          </div>
-
-          {form.criterionType === 'ACCREDITATION' && (
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Programa exigido</Label>
-              <SelectNative
-                value={form.accreditationProgramId}
-                onChange={(e) => update('accreditationProgramId', e.target.value)}
+        <div className="space-y-3 border-t pt-4">
+          <Label>Tipo de criterio (puedes elegir más de uno)</Label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CRITERION_TYPES.map((t) => (
+              <label
+                key={t.value}
+                className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
               >
-                <option value="">Selecciona…</option>
-                {programs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </SelectNative>
-            </div>
-          )}
-
-          {form.criterionType === 'CERTIFICATION' && (
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Certificación exigida</Label>
-              <SelectNative
-                value={form.certificationTypeId}
-                onChange={(e) => update('certificationTypeId', e.target.value)}
-              >
-                <option value="">Selecciona…</option>
-                {certTypes.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </SelectNative>
-            </div>
-          )}
-
-          {form.criterionType === 'TERRITORY' && (
-            <>
-              <div className="space-y-1.5">
-                <Label>Comuna/división exigida</Label>
-                <SelectNative
-                  value={form.adminDivisionId}
-                  onChange={(e) => update('adminDivisionId', e.target.value)}
-                >
-                  <option value="">Selecciona…</option>
-                  {divisions.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </SelectNative>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Días máx. de movilización (opcional)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={form.maxMobilizationDays}
-                  onChange={(e) => update('maxMobilizationDays', e.target.value)}
+                <Checkbox
+                  checked={!!entries[t.value]}
+                  onCheckedChange={(checked) => toggleType(t.value, !!checked)}
                 />
-              </div>
-            </>
-          )}
-
-          {form.criterionType === 'EXPERIENCE_YEARS' && (
-            <div className="space-y-1.5">
-              <Label>Años mínimos</Label>
-              <Input
-                type="number"
-                min={1}
-                value={form.minYears}
-                onChange={(e) => update('minYears', e.target.value)}
-              />
-            </div>
-          )}
-
-          {form.criterionType === 'INDUSTRY_EXPERIENCE' && (
-            <>
-              <div className="space-y-1.5">
-                <Label>Industria</Label>
-                <SelectNative
-                  value={form.industryId}
-                  onChange={(e) => update('industryId', e.target.value)}
-                >
-                  <option value="">Selecciona…</option>
-                  {industries.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}
-                    </option>
-                  ))}
-                </SelectNative>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Años mínimos en esa industria</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={form.minYears}
-                  onChange={(e) => update('minYears', e.target.value)}
-                />
-              </div>
-            </>
-          )}
-
-          {form.criterionType === 'CAPACITY' && (
-            <div className="space-y-1.5">
-              <Label>Capacidad mensual mínima</Label>
-              <Input
-                type="number"
-                min={1}
-                value={form.minCapacity}
-                onChange={(e) => update('minCapacity', e.target.value)}
-              />
-            </div>
-          )}
-
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label>Nota (obligatoria para &quot;Otro&quot;)</Label>
-            <Input value={form.description} onChange={(e) => update('description', e.target.value)} />
+                {t.label}
+              </label>
+            ))}
           </div>
 
-          <div>
-            <Button size="sm" onClick={onAdd}>
-              <Plus className="size-4" />
-              Agregar criterio
-            </Button>
-          </div>
+          {types.length > 0 && (
+            <div className="space-y-3">
+              {types.map((type) => {
+                const f = entries[type];
+                return (
+                  <div key={type} className="space-y-3 rounded-lg border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-medium">
+                        {CRITERION_TYPES.find((t) => t.value === type)?.label}
+                      </span>
+                      <SelectNative
+                        className="w-52"
+                        value={f.requirementLevel}
+                        onChange={(e) => updateEntry(type, 'requirementLevel', e.target.value)}
+                      >
+                        <option value="MUST_HAVE">MUST — obligatorio</option>
+                        <option value="NICE_TO_HAVE">NICE — deseable</option>
+                      </SelectNative>
+                    </div>
+
+                    {type === 'ACCREDITATION' && (
+                      <div className="space-y-1.5">
+                        <Label>Programa exigido</Label>
+                        <SelectNative
+                          value={f.accreditationProgramId}
+                          onChange={(e) => updateEntry(type, 'accreditationProgramId', e.target.value)}
+                        >
+                          <option value="">Selecciona…</option>
+                          {programs.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </SelectNative>
+                      </div>
+                    )}
+
+                    {type === 'CERTIFICATION' && (
+                      <div className="space-y-1.5">
+                        <Label>Certificación exigida</Label>
+                        <SelectNative
+                          value={f.certificationTypeId}
+                          onChange={(e) => updateEntry(type, 'certificationTypeId', e.target.value)}
+                        >
+                          <option value="">Selecciona…</option>
+                          {certTypes.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </SelectNative>
+                      </div>
+                    )}
+
+                    {type === 'TERRITORY' && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Comuna/división exigida</Label>
+                          <SelectNative
+                            value={f.adminDivisionId}
+                            onChange={(e) => updateEntry(type, 'adminDivisionId', e.target.value)}
+                          >
+                            <option value="">Selecciona…</option>
+                            {divisions.map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name}
+                              </option>
+                            ))}
+                          </SelectNative>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Días máx. de movilización (opcional)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={f.maxMobilizationDays}
+                            onChange={(e) => updateEntry(type, 'maxMobilizationDays', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {type === 'EXPERIENCE_YEARS' && (
+                      <div className="space-y-1.5">
+                        <Label>Años mínimos</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={f.minYears}
+                          onChange={(e) => updateEntry(type, 'minYears', e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    {type === 'INDUSTRY_EXPERIENCE' && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Industria</Label>
+                          <SelectNative
+                            value={f.industryId}
+                            onChange={(e) => updateEntry(type, 'industryId', e.target.value)}
+                          >
+                            <option value="">Selecciona…</option>
+                            {industries.map((i) => (
+                              <option key={i.id} value={i.id}>
+                                {i.name}
+                              </option>
+                            ))}
+                          </SelectNative>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Años mínimos en esa industria</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={f.minYears}
+                            onChange={(e) => updateEntry(type, 'minYears', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {type === 'CAPACITY' && (
+                      <div className="space-y-1.5">
+                        <Label>Capacidad mensual mínima</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={f.minCapacity}
+                          onChange={(e) => updateEntry(type, 'minCapacity', e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <Label>Nota {type === 'CUSTOM' ? '(obligatoria)' : '(opcional)'}</Label>
+                      <Input
+                        value={f.description}
+                        onChange={(e) => updateEntry(type, 'description', e.target.value)}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+
+              <Button size="sm" onClick={onAdd} disabled={submitting}>
+                <Plus className="size-4" />
+                {types.length > 1 ? 'Agregar criterios' : 'Agregar criterio'}
+              </Button>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -660,7 +879,11 @@ function QuestionsCard({ organizationId, eventId }) {
   const [answerDrafts, setAnswerDrafts] = useState({});
 
   async function loadQuestions() {
-    setQuestions(await listQuestions(organizationId, eventId));
+    try {
+      setQuestions(await listQuestions(organizationId, eventId));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las preguntas');
+    }
   }
 
   useEffect(() => {
@@ -790,7 +1013,11 @@ function QuotationsCard({ organizationId, eventId, event }) {
   const [opening, setOpening] = useState(false);
 
   async function loadQuotations() {
-    setQuotations(await listQuotations(organizationId, eventId));
+    try {
+      setQuotations(await listQuotations(organizationId, eventId));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las cotizaciones');
+    }
   }
 
   useEffect(() => {

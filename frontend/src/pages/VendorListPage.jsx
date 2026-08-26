@@ -41,7 +41,11 @@ export default function VendorListPage() {
   const [noteDraft, setNoteDraft] = useState('');
 
   async function load() {
-    setRelationships(await listRelationships(activeOrg.id));
+    try {
+      setRelationships(await listRelationships(activeOrg.id));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el vendor list');
+    }
   }
 
   useEffect(() => {

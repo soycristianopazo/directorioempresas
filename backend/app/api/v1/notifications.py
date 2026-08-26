@@ -36,11 +36,13 @@ def _as_http_exception(exc: notifications_service.NotificationError) -> HTTPExce
 
 @router.get("", response_model=list[NotificationOut])
 async def list_notifications(
-    user_id: CurrentUserId, unread_only: bool = Query(default=False)
+    user_id: CurrentUserId,
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> list[NotificationOut]:
     try:
         rows = await notifications_service.list_notifications(
-            user_id=user_id, unread_only=unread_only
+            user_id=user_id, unread_only=unread_only, limit=limit
         )
     except notifications_service.NotificationError as exc:
         raise _as_http_exception(exc) from exc

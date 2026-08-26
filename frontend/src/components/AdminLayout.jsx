@@ -1,6 +1,9 @@
+import { Suspense } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ShieldCheck, Workflow } from 'lucide-react';
 import { UserMenu } from '@/components/UserMenu';
+import { Footer } from '@/components/Footer';
+import { PageFallback } from '@/components/PageFallback';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -57,8 +60,12 @@ export function AdminLayout() {
       </header>
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-        <Outlet />
+        <Suspense fallback={<PageFallback inline />}>
+          <Outlet />
+        </Suspense>
       </main>
+
+      <Footer />
     </div>
   );
 }

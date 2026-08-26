@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, Lock } from 'lucide-react';
+import { CheckCircle2, Lock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,26 +69,16 @@ export default function EvaluationFormPage() {
         <title>Evaluar ofertas · Directorio de Empresas</title>
       </Helmet>
 
-      <div>
-        <Link
-          to={`/empresa/sourcing/${eventId}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          Volver al proceso
-        </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Evaluar ofertas</h1>
-        <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-          {view.can_view_commercial ? (
-            'Tienes acceso a montos (tras la apertura de sobres).'
-          ) : (
-            <>
-              <Lock className="size-3.5" />
-              Vista técnica — sin acceso a montos.
-            </>
-          )}
-        </p>
-      </div>
+      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        {view.can_view_commercial ? (
+          'Tienes acceso a montos (tras la apertura de sobres).'
+        ) : (
+          <>
+            <Lock className="size-3.5" />
+            Vista técnica — sin acceso a montos.
+          </>
+        )}
+      </p>
 
       {Object.keys(itemsByQuotation).length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
@@ -185,7 +175,7 @@ function QuotationCard({
             Enviada
           </Badge>
         ) : (
-          <Badge variant="outline">Borrador</Badge>
+          <Badge variant="neutral">Borrador</Badge>
         )}
       </CardHeader>
       <CardContent className="space-y-4">

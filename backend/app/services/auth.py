@@ -26,10 +26,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password, verify_password
-from app.db.rls import session_for_system, session_for_user
+from app.db.rls import gather_for_user, session_for_system, session_for_user
 from app.models.rbac import PlatformAdmin
 from app.repositories import organizations as orgs_repo
 from app.repositories import users as users_repo
@@ -212,22 +213,31 @@ class MeResult:
     is_platform_admin: bool
 
 
+async def _is_platform_admin(db: AsyncSession, user_id: UUID) -> bool:
+    result = await db.execute(
+        select(PlatformAdmin.user_id).where(
+            PlatformAdmin.user_id == user_id, PlatformAdmin.revoked_at.is_(None)
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def get_me(user_id: UUID) -> MeResult:
     """Corre con la identidad real del usuario (no system context): así se
     ejercita exactamente el mismo camino de RLS que usará el resto de la app,
     y v_my_organizations solo puede devolver lo que ESE usuario ve.
-    """
-    async with session_for_user(user_id) as db:
-        user = await users_repo.get_by_id(db, user_id)
-        profile = await users_repo.get_profile(db, user_id)
-        memberships = await orgs_repo.list_my_memberships(db)
 
-        result = await db.execute(
-            select(PlatformAdmin.user_id).where(
-                PlatformAdmin.user_id == user_id, PlatformAdmin.revoked_at.is_(None)
-            )
-        )
-        is_admin = result.scalar_one_or_none() is not None
+    Las cuatro lecturas son independientes entre sí (todas solo necesitan
+    `user_id`, ya conocido) — van en paralelo vía `gather_for_user` en vez de
+    encadenadas, que es lo que se llama en cada carga de la SPA.
+    """
+    user, profile, memberships, is_admin = await gather_for_user(
+        user_id,
+        lambda db: users_repo.get_by_id(db, user_id),
+        lambda db: users_repo.get_profile(db, user_id),
+        lambda db: orgs_repo.list_my_memberships(db),
+        lambda db: _is_platform_admin(db, user_id),
+    )
 
     if user is None or profile is None:
         raise AuthError("Usuario no encontrado")
@@ -243,3 +253,30 @@ async def get_me(user_id: UUID) -> MeResult:
         memberships=memberships,
         is_platform_admin=is_admin,
     )
+
+
+async def update_profile(
+    user_id: UUID, *, first_name: str, last_name: str
+) -> MeResult:
+    async with session_for_user(user_id) as db:
+        profile = await users_repo.get_profile(db, user_id)
+        if profile is None:
+            raise AuthError("Usuario no encontrado")
+        await users_repo.update_profile(
+            profile, first_name=first_name, last_name=last_name
+        )
+    return await get_me(user_id)
+
+
+async def change_password(
+    user_id: UUID, *, current_password: str, new_password: str
+) -> None:
+    async with session_for_system() as db:
+        user = await users_repo.get_by_id(db, user_id)
+        if user is None or not verify_password(current_password, user.password_hash):
+            raise AuthError("La contraseña actual no es correcta")
+        await users_repo.update_password(user, hash_password(new_password))
+        # Mismo tratamiento que la reutilización de un refresh token robado
+        # (ver refresh() arriba): un cambio de contraseña corta toda sesión
+        # activa en otros dispositivos, no solo la que hizo el cambio.
+        await users_repo.revoke_all_sessions_for_user(db, user_id)

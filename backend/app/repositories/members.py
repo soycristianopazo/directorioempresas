@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.rbac import MemberRole, OrganizationInvitation, OrganizationMember, Role
 from app.models.user import Profile
@@ -101,26 +101,30 @@ async def replace_roles(
 
 async def list_team(
     session: AsyncSession, organization_id: UUID
-) -> list[OrganizationMember]:
+) -> list[tuple[OrganizationMember, Profile]]:
+    """(miembro, perfil) en una sola consulta.
+
+    La versión anterior encadenaba DOS selectinload (roles, luego role
+    dentro de cada rol) y una segunda consulta aparte para los perfiles — 3
+    round trips extra a una BD remota solo para listar un puñado de
+    miembros. Acá: un JOIN a Profile (organization_members.user_id no tiene
+    relación ORM declarada hacia Profile, por eso el join es explícito, no
+    parte de `.options()`) más joinedload de roles, todo en un solo round
+    trip. `.unique()` es obligatorio con joinedload sobre una colección
+    uno-a-muchos — si no, SQLAlchemy devuelve una fila por cada rol en vez
+    de un miembro con su lista de roles.
+    """
     result = await session.execute(
-        select(OrganizationMember)
+        select(OrganizationMember, Profile)
+        .join(Profile, Profile.id == OrganizationMember.user_id)
         .where(
             OrganizationMember.organization_id == organization_id,
             OrganizationMember.status != "REMOVED",
         )
-        .options(selectinload(OrganizationMember.roles).selectinload(MemberRole.role))
+        .options(joinedload(OrganizationMember.roles).joinedload(MemberRole.role))
         .order_by(OrganizationMember.joined_at)
     )
-    return list(result.scalars())
-
-
-async def get_profiles_by_ids(
-    session: AsyncSession, user_ids: list[UUID]
-) -> dict[UUID, Profile]:
-    if not user_ids:
-        return {}
-    result = await session.execute(select(Profile).where(Profile.id.in_(user_ids)))
-    return {p.id: p for p in result.scalars()}
+    return [(m, p) for m, p in result.unique().all()]
 
 
 async def count_active_owners(session: AsyncSession, organization_id: UUID) -> int:

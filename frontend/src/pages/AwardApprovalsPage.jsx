@@ -15,8 +15,12 @@ export default function AwardApprovalsPage() {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    const rows = await listMyPendingApprovals(activeOrg.id);
-    setApprovals(rows.filter((a) => a.status === 'PENDING'));
+    try {
+      const rows = await listMyPendingApprovals(activeOrg.id);
+      setApprovals(rows.filter((a) => a.status === 'PENDING'));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las aprobaciones pendientes');
+    }
   }
 
   useEffect(() => {

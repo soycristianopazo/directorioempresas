@@ -12,10 +12,12 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.offering import (
+    OfferingDeal,
     OfferingDocument,
     OfferingIndustry,
     OfferingMedia,
     OfferingPricing,
+    OfferingTag,
     OfferingTaxonomyNode,
     OfferingTerritory,
     SupplierOffering,
@@ -148,6 +150,32 @@ async def list_taxonomy_nodes_with_names(
     return [dict(row._mapping) for row in result]
 
 
+async def list_taxonomy_nodes_with_names_batch(
+    session: AsyncSession, offering_ids: list[UUID]
+) -> dict[UUID, list[dict]]:
+    """Como `list_taxonomy_nodes_with_names`, para varios offerings en una
+    sola consulta — ver `get_public_organization` en services/search.py:
+    con el catálogo completo de un proveedor, 1 round trip en vez de uno
+    por producto contra una base remota de latencia alta importa."""
+    if not offering_ids:
+        return {}
+    result = await session.execute(
+        text(
+            "select otn.offering_id, otn.node_id, otn.is_primary, tn.name "
+            "from public.offering_taxonomy_nodes otn "
+            "join public.taxonomy_nodes tn on tn.id = otn.node_id "
+            "where otn.offering_id = any(:offering_ids) "
+            "order by otn.is_primary desc, tn.name"
+        ),
+        {"offering_ids": [str(i) for i in offering_ids]},
+    )
+    by_offering: dict[UUID, list[dict]] = {oid: [] for oid in offering_ids}
+    for row in result:
+        r = dict(row._mapping)
+        by_offering[r.pop("offering_id")].append(r)
+    return by_offering
+
+
 async def set_industries(
     session: AsyncSession, offering_id: UUID, industry_ids: list[UUID]
 ) -> None:
@@ -173,6 +201,24 @@ async def list_industries_with_names(
         {"offering_id": str(offering_id)},
     )
     return [dict(row._mapping) for row in result]
+
+
+async def list_tags(session: AsyncSession, offering_id: UUID) -> list[str]:
+    result = await session.execute(
+        select(OfferingTag.tag)
+        .where(OfferingTag.offering_id == offering_id)
+        .order_by(OfferingTag.tag)
+    )
+    return list(result.scalars())
+
+
+async def set_tags(session: AsyncSession, offering_id: UUID, tags: list[str]) -> None:
+    await session.execute(
+        delete(OfferingTag).where(OfferingTag.offering_id == offering_id)
+    )
+    for tag in tags:
+        session.add(OfferingTag(offering_id=offering_id, tag=tag))
+    await session.flush()
 
 
 async def add_territory(session: AsyncSession, **fields: object) -> OfferingTerritory:
@@ -222,6 +268,17 @@ async def get_pricing(
     return result.scalar_one_or_none()
 
 
+async def get_pricing_batch(
+    session: AsyncSession, offering_ids: list[UUID]
+) -> dict[UUID, OfferingPricing]:
+    if not offering_ids:
+        return {}
+    result = await session.execute(
+        select(OfferingPricing).where(OfferingPricing.offering_id.in_(offering_ids))
+    )
+    return {p.offering_id: p for p in result.scalars()}
+
+
 async def upsert_pricing(
     session: AsyncSession, offering_id: UUID, **fields: object
 ) -> OfferingPricing:
@@ -246,6 +303,22 @@ async def list_media(session: AsyncSession, offering_id: UUID) -> list[OfferingM
         .order_by(OfferingMedia.sort_order)
     )
     return list(result.scalars())
+
+
+async def list_media_batch(
+    session: AsyncSession, offering_ids: list[UUID]
+) -> dict[UUID, list[OfferingMedia]]:
+    if not offering_ids:
+        return {}
+    result = await session.execute(
+        select(OfferingMedia)
+        .where(OfferingMedia.offering_id.in_(offering_ids))
+        .order_by(OfferingMedia.sort_order)
+    )
+    by_offering: dict[UUID, list[OfferingMedia]] = {oid: [] for oid in offering_ids}
+    for media in result.scalars():
+        by_offering[media.offering_id].append(media)
+    return by_offering
 
 
 async def create_media(session: AsyncSession, **fields: object) -> OfferingMedia:
@@ -300,6 +373,85 @@ async def get_document(
 
 async def delete_document(session: AsyncSession, document: OfferingDocument) -> None:
     await session.delete(document)
+
+
+# ─── Ofertas (deals) ──────────────────────────────────────────────────────────
+
+
+async def create_deal(session: AsyncSession, **fields: object) -> OfferingDeal:
+    deal = OfferingDeal(**fields)
+    session.add(deal)
+    await session.flush()
+    return deal
+
+
+async def get_deal(
+    session: AsyncSession, deal_id: UUID, *, offering_id: UUID
+) -> OfferingDeal | None:
+    result = await session.execute(
+        select(OfferingDeal).where(
+            OfferingDeal.id == deal_id, OfferingDeal.offering_id == offering_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_deals(session: AsyncSession, offering_id: UUID) -> list[OfferingDeal]:
+    result = await session.execute(
+        select(OfferingDeal)
+        .where(OfferingDeal.offering_id == offering_id)
+        .order_by(OfferingDeal.created_at.desc())
+    )
+    return list(result.scalars())
+
+
+async def get_active_deal(
+    session: AsyncSession, offering_id: UUID
+) -> OfferingDeal | None:
+    """La oferta vigente (si hay una) — vigencia calculada acá mismo, no
+    guardada (ver comentario del modelo). Se usa para impedir crear una
+    segunda oferta mientras la anterior sigue corriendo."""
+    result = await session.execute(
+        text(
+            "select * from public.offering_deals "
+            "where offering_id = :offering_id "
+            "  and cancelled_at is null "
+            "  and (expires_at is null or expires_at > now()) "
+            "  and (stock_quantity is null or stock_remaining > 0) "
+            "order by created_at desc limit 1"
+        ),
+        {"offering_id": str(offering_id)},
+    )
+    row = result.mappings().first()
+    if row is None:
+        return None
+    return await session.get(OfferingDeal, row["id"])
+
+
+async def list_org_deals(session: AsyncSession, organization_id: UUID) -> list[dict]:
+    """Todas las ofertas (vigentes e históricas) de la organización, para el
+    dashboard de Ofertas — con nombre/slug de la publicación, que no vive en
+    offering_deals."""
+    result = await session.execute(
+        text(
+            "select od.*, so.name as offering_name, so.slug as offering_slug, "
+            "       so.status as offering_status "
+            "from public.offering_deals od "
+            "join public.supplier_offerings so on so.id = od.offering_id "
+            "where so.organization_id = :organization_id and so.deleted_at is null "
+            "order by od.created_at desc"
+        ),
+        {"organization_id": str(organization_id)},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+async def update_deal_stock(deal: OfferingDeal, stock_remaining: int) -> None:
+    deal.stock_remaining = stock_remaining
+
+
+async def cancel_deal(deal: OfferingDeal) -> None:
+    deal.cancelled_at = datetime.now(timezone.utc)
 
 
 # ─── Valores de atributos ─────────────────────────────────────────────────────

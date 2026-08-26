@@ -55,15 +55,19 @@ export default function SupplierQuotationPage() {
   });
 
   async function loadAll() {
-    const d = await getEvent(activeOrg.id, eventId);
-    setDetail(d);
-    setLines((prev) => {
-      if (Object.keys(prev).length > 0) return prev;
-      return Object.fromEntries(d.items.map((item) => [item.id, emptyLineFor(item)]));
-    });
-    setRevisions(await listMyRevisions(activeOrg.id, eventId));
-    const rounds = await listMyRound(activeOrg.id, eventId);
-    setActiveRound(rounds.find((r) => !r.closed_at && !r.responded_at) || null);
+    try {
+      const d = await getEvent(activeOrg.id, eventId);
+      setDetail(d);
+      setLines((prev) => {
+        if (Object.keys(prev).length > 0) return prev;
+        return Object.fromEntries(d.items.map((item) => [item.id, emptyLineFor(item)]));
+      });
+      setRevisions(await listMyRevisions(activeOrg.id, eventId));
+      const rounds = await listMyRound(activeOrg.id, eventId);
+      setActiveRound(rounds.find((r) => !r.closed_at && !r.responded_at) || null);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar la cotización');
+    }
   }
 
   useEffect(() => {

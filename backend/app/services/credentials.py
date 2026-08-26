@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID, uuid4
 
+from app.core import cache
 from app.core.file_validation import matches_declared_image_type
 from app.core.storage import StorageError, delete_object, public_url, upload_object
 from app.db.rls import session_for_user
@@ -13,6 +14,21 @@ from app.services.completion import recompute_completion_pct
 
 PERMISSION_UPDATE = "organization.update"
 MEDIA_BUCKET = "org-media"
+
+_LIST_CACHE_TTL_SECONDS = 30
+# Tipos de certificación: catálogo de referencia, igual para cualquiera —
+# TTL largo, una sola clave global.
+_TYPES_CACHE_TTL_SECONDS = 300
+_TYPES_CACHE_KEY = "certification_types"
+
+
+def _credentials_cache_key(resource: str, organization_id: UUID, user_id: UUID) -> str:
+    return f"credentials:{organization_id}:{user_id}:{resource}"
+
+
+def _credentials_cache_prefix(organization_id: UUID) -> str:
+    return f"credentials:{organization_id}:"
+
 
 _ALLOWED_IMAGE_TYPES = {
     "image/jpeg": "jpg",
@@ -50,16 +66,27 @@ async def _require(db, organization_id: UUID) -> None:
 
 
 async def list_certification_types(*, user_id: UUID) -> list:
+    cached = cache.get(_TYPES_CACHE_KEY)
+    if cached is not None:
+        return cached
     async with session_for_user(user_id) as db:
-        return list(await credentials_repo.list_certification_types(db))
+        result = list(await credentials_repo.list_certification_types(db))
+    cache.set(_TYPES_CACHE_KEY, result, ttl_seconds=_TYPES_CACHE_TTL_SECONDS)
+    return result
 
 
 # ─── Certificaciones ───────────────────────────────────────────────────────────
 
 
 async def list_certifications(*, user_id: UUID, organization_id: UUID) -> list:
+    cache_key = _credentials_cache_key("certifications", organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     async with session_for_user(user_id) as db:
-        return list(await credentials_repo.list_certifications(db, organization_id))
+        result = list(await credentials_repo.list_certifications(db, organization_id))
+    cache.set(cache_key, result, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+    return result
 
 
 async def create_certification(
@@ -87,6 +114,7 @@ async def create_certification(
         )
         await recompute_completion_pct(db, organization_id)
         certification_id = row.id
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
     return certification_id
 
 
@@ -102,14 +130,23 @@ async def delete_certification(
             raise CredentialsNotFoundError("Certificación no encontrada")
         await credentials_repo.delete_certification(db, row)
         await recompute_completion_pct(db, organization_id)
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
 
 
 # ─── Referencias de clientes ──────────────────────────────────────────────────
 
 
 async def list_client_references(*, user_id: UUID, organization_id: UUID) -> list:
+    cache_key = _credentials_cache_key("client_references", organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     async with session_for_user(user_id) as db:
-        return list(await credentials_repo.list_client_references(db, organization_id))
+        result = list(
+            await credentials_repo.list_client_references(db, organization_id)
+        )
+    cache.set(cache_key, result, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+    return result
 
 
 async def create_client_reference(
@@ -138,6 +175,7 @@ async def create_client_reference(
             is_public=is_public,
         )
         reference_id = row.id
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
     return reference_id
 
 
@@ -151,14 +189,21 @@ async def delete_client_reference(
         )
         if not removed:
             raise CredentialsNotFoundError("Referencia no encontrada")
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
 
 
 # ─── Casos de éxito ────────────────────────────────────────────────────────────
 
 
 async def list_case_studies(*, user_id: UUID, organization_id: UUID) -> list:
+    cache_key = _credentials_cache_key("case_studies", organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     async with session_for_user(user_id) as db:
-        return list(await credentials_repo.list_case_studies(db, organization_id))
+        result = list(await credentials_repo.list_case_studies(db, organization_id))
+    cache.set(cache_key, result, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+    return result
 
 
 async def create_case_study(
@@ -171,6 +216,7 @@ async def create_case_study(
         )
         await recompute_completion_pct(db, organization_id)
         case_study_id = row.id
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
     return case_study_id
 
 
@@ -185,6 +231,7 @@ async def update_case_study(
         if case_study is None:
             raise CredentialsNotFoundError("Caso de éxito no encontrado")
         await credentials_repo.update_case_study(case_study, **fields)
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
 
 
 async def delete_case_study(
@@ -199,6 +246,7 @@ async def delete_case_study(
             raise CredentialsNotFoundError("Caso de éxito no encontrado")
         await credentials_repo.delete_case_study(db, case_study)
         await recompute_completion_pct(db, organization_id)
+    cache.invalidate_prefix(_credentials_cache_prefix(organization_id))
 
 
 async def set_case_study_taxonomy(

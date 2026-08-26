@@ -39,13 +39,18 @@ from app.api.v1.documents import types_router as document_types_router
 from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.evaluations import templates_router as evaluation_templates_router
 from app.api.v1.invitations import router as invitations_router
+from app.api.v1.invitations import sent_router as sent_invitations_router
 from app.api.v1.invitations import supplier_router as supplier_invitations_router
 from app.api.v1.matching import router as matching_router
+from app.api.v1.deals import router as deals_router
 from app.api.v1.messaging import router as messaging_router
 from app.api.v1.negotiations import router as negotiations_router
 from app.api.v1.negotiations import supplier_router as supplier_negotiations_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.offerings import router as offerings_router
+from app.api.v1.organization_accreditation import (
+    router as organization_accreditation_router,
+)
 from app.api.v1.organization_profile import router as organization_profile_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.qa import router as qa_router
@@ -102,6 +107,7 @@ app.include_router(admin_taxonomy_router, prefix="/api")
 app.include_router(admin_industries_router, prefix="/api")
 app.include_router(organization_profile_router, prefix="/api")
 app.include_router(offerings_router, prefix="/api")
+app.include_router(deals_router, prefix="/api")
 app.include_router(credentials_router, prefix="/api")
 app.include_router(certification_types_router, prefix="/api")
 app.include_router(discover_router, prefix="/api")
@@ -111,11 +117,13 @@ app.include_router(documents_router, prefix="/api")
 app.include_router(accreditation_programs_router, prefix="/api")
 app.include_router(accreditation_router, prefix="/api")
 app.include_router(admin_accreditation_router, prefix="/api")
+app.include_router(organization_accreditation_router, prefix="/api")
 app.include_router(requirements_router, prefix="/api")
 app.include_router(sourcing_router, prefix="/api")
 app.include_router(matching_router, prefix="/api")
 app.include_router(invitations_router, prefix="/api")
 app.include_router(supplier_invitations_router, prefix="/api")
+app.include_router(sent_invitations_router, prefix="/api")
 app.include_router(qa_router, prefix="/api")
 app.include_router(quotations_router, prefix="/api")
 app.include_router(supplier_quotations_router, prefix="/api")

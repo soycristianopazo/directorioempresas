@@ -7,13 +7,32 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.core import cache
 from app.core.config import settings
-from app.db.rls import session_for_system, session_for_user
+from app.db.rls import gather_for_user, session_for_system, session_for_user
 from app.repositories import members as members_repo
 from app.repositories import organizations as orgs_repo
 from app.services import entitlements as entitlements_service
 
 INVITATION_TTL_DAYS = 7
+_TEAM_CACHE_TTL_SECONDS = 30
+# Cachear solo los datos no alcanza: el chequeo de permiso EN VIVO (SET_USER
+# + query) ya cuesta por sí solo el mismo piso de latencia que la consulta
+# completa (~1.4-1.5s contra esta base remota) — probado con el benchmark
+# que motivó este rediseño. Por eso acá se cachea la DECISIÓN completa
+# (autorizado + datos, o denegado) por usuario: un hit no toca la base en
+# absoluto. Costo aceptado: un permiso recién revocado puede seguir viéndose
+# autorizado hasta por _TEAM_CACHE_TTL_SECONDS — por eso el TTL es corto y
+# toda escritura sobre el roster invalida el prefijo completo de la org.
+_TEAM_DENIED = object()
+
+
+def _team_cache_prefix(organization_id: UUID) -> str:
+    return f"team:{organization_id}:"
+
+
+def _team_cache_key(organization_id: UUID, user_id: UUID) -> str:
+    return f"{_team_cache_prefix(organization_id)}{user_id}"
 
 
 class TeamError(Exception):
@@ -130,6 +149,7 @@ async def accept_invitation(*, user_id: UUID, user_email: str, token: str) -> UU
 
         organization_id = invitation.organization_id
 
+    cache.invalidate_prefix(_team_cache_prefix(organization_id))
     return organization_id
 
 
@@ -154,6 +174,8 @@ async def remove_member(
             raise TeamError("Miembro no encontrado")
         member.status = "REMOVED"
         member.removed_at = datetime.now(UTC)
+
+    cache.invalidate_prefix(_team_cache_prefix(organization_id))
 
 
 async def change_member_roles(
@@ -181,38 +203,51 @@ async def change_member_roles(
 
         await members_repo.replace_roles(db, member_id=member_id, role_ids=role_ids)
 
+    cache.invalidate_prefix(_team_cache_prefix(organization_id))
+
 
 async def list_team(*, user_id: UUID, organization_id: UUID) -> list[dict]:
-    async with session_for_user(user_id) as db:
-        if not await orgs_repo.has_permission(db, organization_id, "member.read"):
+    cache_key = _team_cache_key(organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        if cached is _TEAM_DENIED:
             raise TeamError("Sin permiso para ver el equipo")
+        return cached
 
-        members = await members_repo.list_team(db, organization_id)
-        profiles = await members_repo.get_profiles_by_ids(
-            db, [m.user_id for m in members]
-        )
+    # El gate y los datos son independientes entre sí (RLS ya filtra lo que
+    # `list_team` puede ver — este chequeo solo da un mensaje de error
+    # legible, no es la barrera real) — van en paralelo en vez de uno tras
+    # otro.
+    has_perm, rows = await gather_for_user(
+        user_id,
+        lambda db: orgs_repo.has_permission(db, organization_id, "member.read"),
+        lambda db: members_repo.list_team(db, organization_id),
+    )
+    if not has_perm:
+        cache.set(cache_key, _TEAM_DENIED, ttl_seconds=_TEAM_CACHE_TTL_SECONDS)
+        raise TeamError("Sin permiso para ver el equipo")
 
-        return [
-            {
-                "member_id": m.id,
-                "user_id": m.user_id,
-                "status": m.status,
-                "joined_at": m.joined_at,
-                "full_name": (
-                    profiles[m.user_id].full_name if m.user_id in profiles else None
-                ),
-                # El email vive en public.users, no en profiles, y solo se
-                # resuelve para quien puede administrar el equipo — igual que
-                # en la versión anterior. Se deja en None aquí: el router lo
-                # completa con una consulta aparte solo si hace falta.
-                "email": None,
-                "roles": [
-                    {"id": mr.role.id, "code": mr.role.code, "name": mr.role.name}
-                    for mr in m.roles
-                ],
-            }
-            for m in members
-        ]
+    result = [
+        {
+            "member_id": m.id,
+            "user_id": m.user_id,
+            "status": m.status,
+            "joined_at": m.joined_at,
+            "full_name": profile.full_name,
+            # El email vive en public.users, no en profiles, y solo se
+            # resuelve para quien puede administrar el equipo — igual que
+            # en la versión anterior. Se deja en None aquí: el router lo
+            # completa con una consulta aparte solo si hace falta.
+            "email": None,
+            "roles": [
+                {"id": mr.role.id, "code": mr.role.code, "name": mr.role.name}
+                for mr in m.roles
+            ],
+        }
+        for m, profile in rows
+    ]
+    cache.set(cache_key, result, ttl_seconds=_TEAM_CACHE_TTL_SECONDS)
+    return result
 
 
 async def list_assignable_roles(*, user_id: UUID, organization_id: UUID) -> list[dict]:

@@ -14,6 +14,7 @@ from app.schemas.reference import (
     CountryOut,
     CurrencyOut,
     LanguageOut,
+    SiiEconomicActivityOut,
     UnitOfMeasureOut,
 )
 from app.services import reference as reference_service
@@ -55,3 +56,17 @@ async def list_admin_divisions(
         session, country_code=country, parent_id=parent_id
     )
     return [AdminDivisionOut.model_validate(d) for d in divisions]
+
+
+@router.get(
+    "/sii-economic-activities", response_model=list[SiiEconomicActivityOut]
+)
+async def search_sii_economic_activities(
+    session: PublicSession,
+    q: str = Query(min_length=1, max_length=100),
+    limit: int = Query(default=30, ge=1, le=50),
+) -> list[SiiEconomicActivityOut]:
+    activities = await reference_service.search_sii_economic_activities(
+        session, q=q, limit=limit
+    )
+    return [SiiEconomicActivityOut.model_validate(a) for a in activities]

@@ -89,32 +89,36 @@ async def notify_org(
         member_ids = await notifications_repo.list_active_member_user_ids(
             db, organization_id
         )
-        for member_id in member_ids:
-            disabled = await notifications_repo.get_disabled_event_types(
-                db, member_id, _CHANNEL_IN_APP
-            )
-            if type in disabled:
-                continue
-            await notifications_repo.create_notification(
-                db,
-                recipient_id=member_id,
-                type=type,
-                title=title,
-                body=body,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                action_url=action_url,
-                priority=priority,
-            )
+        if not member_ids:
+            return
+        # Una sola consulta para el lote completo de miembros, y un único
+        # insert masivo — antes eran hasta 2 round trips por miembro.
+        disabled_ids = await notifications_repo.get_users_with_type_disabled(
+            db, member_ids, _CHANNEL_IN_APP, type
+        )
+        recipient_ids = [m for m in member_ids if m not in disabled_ids]
+        await notifications_repo.create_notifications_bulk(
+            db,
+            recipient_ids=recipient_ids,
+            type=type,
+            title=title,
+            body=body,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action_url=action_url,
+            priority=priority,
+        )
 
 
 # ─── Bandeja propia del usuario ───────────────────────────────────────────────
 
 
-async def list_notifications(*, user_id: UUID, unread_only: bool = False) -> list[dict]:
+async def list_notifications(
+    *, user_id: UUID, unread_only: bool = False, limit: int = 50
+) -> list[dict]:
     async with session_for_user(user_id) as db:
         rows = await notifications_repo.list_notifications(
-            db, user_id, unread_only=unread_only
+            db, user_id, unread_only=unread_only, limit=limit
         )
         return [
             {

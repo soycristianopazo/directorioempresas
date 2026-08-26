@@ -9,13 +9,15 @@ distinto para no mezclarse con las fichas técnicas de ofertas.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import date, timedelta
 from uuid import UUID, uuid4
 
+from app.core import cache
 from app.core.file_validation import matches_pdf
 from app.core.storage import StorageError, create_signed_url, upload_object
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.repositories import documents as documents_repo
 
 PERM_READ = "document.read"
@@ -24,6 +26,22 @@ PERM_DELETE = "document.delete"
 
 DOCUMENTS_BUCKET = "org-documents"
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+
+_LIST_CACHE_TTL_SECONDS = 30
+# Tipos de documento: catálogo de referencia administrado por platform admin,
+# cambia casi nunca — TTL largo y una sola clave global, sin permiso que
+# verificar (list_document_types no tiene gate, es igual para cualquiera).
+_TYPES_CACHE_TTL_SECONDS = 300
+_TYPES_CACHE_KEY = "document_types"
+_DOCUMENTS_DENIED = object()
+
+
+def _documents_cache_key(organization_id: UUID, user_id: UUID) -> str:
+    return f"documents:{organization_id}:{user_id}"
+
+
+def _documents_cache_prefix(organization_id: UUID) -> str:
+    return f"documents:{organization_id}:"
 
 
 class DocumentError(Exception):
@@ -48,14 +66,46 @@ async def _require(db, organization_id: UUID, permission: str) -> None:
 
 
 async def list_document_types(*, user_id: UUID) -> list:
+    cached = cache.get(_TYPES_CACHE_KEY)
+    if cached is not None:
+        return cached
     async with session_for_user(user_id) as db:
-        return await documents_repo.list_document_types(db)
+        result = await documents_repo.list_document_types(db)
+    cache.set(_TYPES_CACHE_KEY, result, ttl_seconds=_TYPES_CACHE_TTL_SECONDS)
+    return result
 
 
 async def list_documents(*, user_id: UUID, organization_id: UUID) -> list[dict]:
-    async with session_for_user(user_id) as db:
-        await _require(db, organization_id, PERM_READ)
-        return await documents_repo.list_documents_with_types(db, organization_id)
+    cache_key = _documents_cache_key(organization_id, user_id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        if cached is _DOCUMENTS_DENIED:
+            raise DocumentPermissionError(f"Sin permiso ({PERM_READ}) para esta acción")
+        return cached
+
+    # Independientes entre sí — en paralelo, no permiso primero y luego
+    # datos (ver team.py::list_team: el permiso solo ya paga el piso
+    # completo de latencia contra esta base).
+    has_perm, result = await gather_for_user(
+        user_id,
+        lambda db: documents_repo.has_permission(db, organization_id, PERM_READ),
+        lambda db: documents_repo.list_documents_with_types(db, organization_id),
+    )
+    if not has_perm:
+        cache.set(cache_key, _DOCUMENTS_DENIED, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+        raise DocumentPermissionError(f"Sin permiso ({PERM_READ}) para esta acción")
+
+    cache.set(cache_key, result, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+    return result
+
+
+async def _signed_url_or_none(storage_path: str) -> str | None:
+    try:
+        return await create_signed_url(
+            bucket=DOCUMENTS_BUCKET, path=storage_path, expires_in=3600
+        )
+    except StorageError:
+        return None
 
 
 async def list_versions(
@@ -64,25 +114,24 @@ async def list_versions(
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_READ)
         versions = await documents_repo.list_versions(db, document_id)
-        result = []
-        for v in versions:
-            try:
-                url = await create_signed_url(
-                    bucket=DOCUMENTS_BUCKET, path=v.storage_path, expires_in=3600
-                )
-            except StorageError:
-                url = None
-            result.append(
-                {
-                    "id": v.id,
-                    "status": v.status,
-                    "issued_at": v.issued_at,
-                    "valid_from": v.valid_from,
-                    "valid_until": v.valid_until,
-                    "url": url,
-                }
-            )
-        return result
+
+    # Firmar cada URL es una llamada HTTP a Supabase Storage, no una consulta
+    # a la BD — no comparten sesión ni dependen entre sí, así que van en
+    # paralelo en vez de una tras otra.
+    urls = await asyncio.gather(
+        *(_signed_url_or_none(v.storage_path) for v in versions)
+    )
+    return [
+        {
+            "id": v.id,
+            "status": v.status,
+            "issued_at": v.issued_at,
+            "valid_from": v.valid_from,
+            "valid_until": v.valid_until,
+            "url": url,
+        }
+        for v, url in zip(versions, urls, strict=True)
+    ]
 
 
 async def upload_version(
@@ -151,6 +200,8 @@ async def upload_version(
         )
         version_id = version.id
         path = storage_path
+
+    cache.invalidate_prefix(_documents_cache_prefix(organization_id))
 
     try:
         url = await create_signed_url(

@@ -28,7 +28,9 @@ import { SelectNative } from '@/components/ui/select-native';
 import { Textarea } from '@/components/ui/textarea';
 import { CategorySelector } from '@/components/CategorySelector';
 import { IndustrySelector } from '@/components/IndustrySelector';
+import { TagInput } from '@/components/TagInput';
 import { AdminDivisionSelector } from '@/components/AdminDivisionSelector';
+import { OfferingCompletion } from '@/components/OfferingCompletion';
 import { getNodeAttributes } from '@/lib/taxonomyApi';
 import { getCurrencies, getUnitsOfMeasure } from '@/lib/referenceApi';
 import {
@@ -41,6 +43,8 @@ import {
   setOfferingTaxonomyNodes,
   getOfferingIndustries,
   setOfferingIndustries,
+  getOfferingTags,
+  setOfferingTags,
   getOfferingTerritories,
   addOfferingTerritory,
   removeOfferingTerritory,
@@ -101,6 +105,7 @@ export default function OfferingDetailPage() {
   const [offering, setOffering] = useState(null);
   const [taxonomyNodes, setTaxonomyNodes] = useState([]);
   const [industries, setIndustries] = useState([]);
+  const [tags, setTags] = useState([]);
   const [territories, setTerritories] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [media, setMedia] = useState([]);
@@ -121,11 +126,12 @@ export default function OfferingDetailPage() {
 
   async function loadAll() {
     const org = activeOrg.id;
-    const [off, nodes, inds, terrs, price, mediaList, docs, attrValues, refCurrencies, refUnits] =
+    const [off, nodes, inds, offeringTags, terrs, price, mediaList, docs, attrValues, refCurrencies, refUnits] =
       await Promise.all([
         getOffering(org, offeringId),
         getOfferingTaxonomyNodes(org, offeringId),
         getOfferingIndustries(org, offeringId),
+        getOfferingTags(org, offeringId),
         getOfferingTerritories(org, offeringId),
         getOfferingPricing(org, offeringId),
         listOfferingMedia(org, offeringId),
@@ -137,6 +143,7 @@ export default function OfferingDetailPage() {
     setOffering(off);
     setTaxonomyNodes(nodes);
     setIndustries(inds);
+    setTags(offeringTags.map((t) => t.tag));
     setTerritories(terrs);
     setPricing(price);
     setMedia(mediaList);
@@ -211,6 +218,26 @@ export default function OfferingDetailPage() {
     [taxonomyNodes],
   );
 
+  // Mismos siete puntos que pesa app.compute_offering_completion_pct (0091)
+  // — el % viene del servidor, este checklist solo traduce ese número a
+  // "qué falta" usando datos que la página ya tiene cargados.
+  const completionItems = useMemo(
+    () => [
+      { label: 'Descripción completa', done: !!offering?.full_description, anchor: 'section-basicos' },
+      { label: 'Categoría', done: taxonomyNodes.length > 0, anchor: 'section-categorias' },
+      { label: 'Fotos', done: media.length > 0, anchor: 'section-fotos' },
+      { label: 'Precio', done: !!pricing, anchor: 'section-precio' },
+      { label: 'Hashtags', done: tags.length > 0, anchor: 'section-tags' },
+      {
+        label: 'Especificaciones, marca o modelo',
+        done: !!(offering?.specifications || offering?.brand || offering?.model),
+        anchor: 'section-basicos',
+      },
+      { label: 'Industrias', done: industries.length > 0, anchor: 'section-industrias' },
+    ],
+    [offering, taxonomyNodes, media, pricing, tags, industries],
+  );
+
   async function onSaveBasic(values) {
     try {
       await updateOffering(activeOrg.id, offeringId, {
@@ -254,6 +281,16 @@ export default function OfferingDetailPage() {
       await loadAll();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'No se pudo guardar');
+    }
+  }
+
+  async function onSaveTags(newTags) {
+    setTags(newTags);
+    try {
+      await setOfferingTags(activeOrg.id, offeringId, newTags);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo guardar');
+      await loadAll();
     }
   }
 
@@ -502,7 +539,9 @@ export default function OfferingDetailPage() {
         </p>
       )}
 
-      <Card>
+      <OfferingCompletion pct={offering.completion_pct} items={completionItems} />
+
+      <Card id="section-basicos">
         <CardHeader>
           <CardTitle>Datos básicos</CardTitle>
         </CardHeader>
@@ -568,7 +607,7 @@ export default function OfferingDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="section-categorias">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Tags className="size-4 text-primary" />
@@ -581,13 +620,28 @@ export default function OfferingDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="section-industrias">
         <CardHeader>
           <CardTitle>Industrias</CardTitle>
           <CardDescription>A quién le sirve este producto o servicio en particular.</CardDescription>
         </CardHeader>
         <CardContent>
           <IndustrySelector selectedIds={selectedIndustryIds} onChange={onSaveIndustries} />
+        </CardContent>
+      </Card>
+
+      <Card id="section-tags">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Tags className="size-4 text-primary" />
+            Hashtags
+          </CardTitle>
+          <CardDescription>
+            Palabras clave libres para búsqueda y matching fino de este producto o servicio.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TagInput tags={tags} onChange={onSaveTags} />
         </CardContent>
       </Card>
 
@@ -616,7 +670,7 @@ export default function OfferingDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="section-precio">
         <CardHeader>
           <CardTitle>Precio</CardTitle>
         </CardHeader>
@@ -669,7 +723,7 @@ export default function OfferingDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="section-fotos">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ImageIcon className="size-4 text-primary" />

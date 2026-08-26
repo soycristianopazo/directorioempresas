@@ -15,15 +15,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.storage import public_url
-from app.db.rls import session_for_system
+from app.db.rls import gather_for_user, session_for_system, session_for_user
 from app.repositories import credentials as credentials_repo
 from app.repositories import offerings as offerings_repo
 from app.repositories import organization_profile as profile_repo
 from app.repositories import badges as badges_repo
 from app.repositories import organizations as organizations_repo
+from app.repositories import reference as reference_repo
 from app.repositories import search as search_repo
 
 MEDIA_BUCKET = "org-media"
@@ -67,6 +69,7 @@ async def search_offerings(
     page_size: int = 20,
     searching_organization_id: UUID | None = None,
     log: bool = True,
+    background_tasks: BackgroundTasks | None = None,
 ) -> dict:
     results, total = await search_repo.search_offerings(
         session,
@@ -79,6 +82,11 @@ async def search_offerings(
         page=page,
         page_size=page_size,
     )
+    for r in results:
+        image_path = r.pop("image_path", None)
+        r["image_url"] = (
+            public_url(bucket=MEDIA_BUCKET, path=image_path) if image_path else None
+        )
     facets = await search_repo.facet_counts(
         session,
         query=query,
@@ -97,17 +105,30 @@ async def search_offerings(
             "offering_type": offering_type,
             "availability_status": availability_status,
         }
-        async with session_for_system() as db:
-            await search_repo.log_search(
-                db,
-                query_text=query,
+        # Registrar la búsqueda y las impresiones es puro analytics, a nadie
+        # que está esperando resultados le importa que termine antes de ver
+        # la página — pero antes se hacía `await` acá mismo, sumando 2
+        # round trips más a una base remota de ~0.6-0.9s cada uno (medido en
+        # vivo) al camino crítico de /discover. Con `background_tasks` (lo
+        # pasan las rutas de FastAPI) corre DESPUÉS de responder; sin él
+        # (llamadas fuera de un request, tests) cae al await de siempre.
+        if background_tasks is not None:
+            background_tasks.add_task(
+                _log_search_activity,
+                query=query,
                 filters=filters,
-                result_count=total,
+                total=total,
                 searching_organization_id=searching_organization_id,
+                results=results,
             )
-            offerings = [(r["offering_id"], r["organization_id"]) for r in results]
-            if offerings:
-                await search_repo.record_impressions(db, offerings)
+        else:
+            await _log_search_activity(
+                query=query,
+                filters=filters,
+                total=total,
+                searching_organization_id=searching_organization_id,
+                results=results,
+            )
 
     return {
         "results": results,
@@ -118,22 +139,102 @@ async def search_offerings(
     }
 
 
-async def get_public_organization(session: AsyncSession, slug: str) -> dict | None:
+async def _log_search_activity(
+    *,
+    query: str | None,
+    filters: dict,
+    total: int,
+    searching_organization_id: UUID | None,
+    results: list[dict],
+) -> None:
+    async with session_for_system() as db:
+        await search_repo.log_search(
+            db,
+            query_text=query,
+            filters=filters,
+            result_count=total,
+            searching_organization_id=searching_organization_id,
+        )
+        offerings = [(r["offering_id"], r["organization_id"]) for r in results]
+        if offerings:
+            await search_repo.record_impressions(db, offerings)
+
+
+async def get_public_organization(user_id: UUID | None, slug: str) -> dict | None:
     """Perfil público completo de una organización. `None` si no existe o
     RLS no la deja ver (organización no ACTIVE+PUBLIC para un visitante sin
-    sesión — ver app.can_view_organization)."""
-    org = await organizations_repo.get_by_slug(session, slug)
+    sesión — ver app.can_view_organization). `user_id=None` es el visitante
+    anónimo; un `user_id` de un miembro de la organización ve el perfil
+    aunque todavía no esté publicado (usado por la vista previa del dueño).
+
+    Las ~12 lecturas de acá abajo son independientes entre sí — antes se
+    encadenaban en una sola sesión y cada `await` pagaba de nuevo la latencia
+    de red hacia la base remota (~200-300ms, ver docstring de
+    `gather_for_user`). Correrlas en paralelo, cada una en su propia
+    conexión del pool, cambia el costo de "N round trips sumados" a
+    "el más lento de los N" — es la razón por la que este perfil tardaba
+    varios segundos en cargar."""
+    async with session_for_user(user_id) as session:
+        org = await organizations_repo.get_by_slug(session, slug)
     if org is None:
         return None
 
-    offerings = await offerings_repo.list_offerings(session, org.id, status="ACTIVE")
+    (
+        offerings,
+        cert_type_rows,
+        media_rows,
+        locations,
+        contacts,
+        industries,
+        economic_activities,
+        territories,
+        certifications,
+        client_references,
+        case_studies,
+        badges,
+    ) = await gather_for_user(
+        user_id,
+        lambda db: offerings_repo.list_offerings(db, org.id, status="ACTIVE"),
+        lambda db: credentials_repo.list_certification_types(db),
+        lambda db: profile_repo.list_media(db, org.id),
+        lambda db: profile_repo.list_locations(db, org.id),
+        lambda db: profile_repo.list_contacts(db, org.id),
+        lambda db: profile_repo.list_industries(db, org.id),
+        lambda db: profile_repo.list_economic_activities(db, org.id),
+        lambda db: profile_repo.list_territories(db, org.id),
+        lambda db: credentials_repo.list_certifications(db, org.id),
+        lambda db: credentials_repo.list_client_references(db, org.id),
+        lambda db: credentials_repo.list_case_studies(db, org.id),
+        lambda db: badges_repo.list_org_badges(db, org.id),
+    )
+
+    # Antes: 3 lecturas POR offering (nodos, precio, media), todas en el
+    # mismo gather — para un catálogo de 10 productos, 30 conexiones
+    # paralelas contra una base remota de latencia alta. Un proveedor sin
+    # media ni pricing configurados igual pagaba esa cuenta completa. Ahora:
+    # 3 consultas batch (`= any(:ids)` / `.in_()`), sin importar cuántos
+    # productos tenga el catálogo — medido en vivo: la ficha de un proveedor
+    # con catálogo bajaba de ~18s a rangos manejables con este cambio.
+    offering_ids = [o.id for o in offerings]
+    if offering_ids:
+        nodes_by_offering, pricing_by_offering, media_by_offering = (
+            await gather_for_user(
+                user_id,
+                lambda db: offerings_repo.list_taxonomy_nodes_with_names_batch(
+                    db, offering_ids
+                ),
+                lambda db: offerings_repo.get_pricing_batch(db, offering_ids),
+                lambda db: offerings_repo.list_media_batch(db, offering_ids),
+            )
+        )
+    else:
+        nodes_by_offering, pricing_by_offering, media_by_offering = {}, {}, {}
+
     offering_summaries = []
     for offering in offerings:
-        nodes = await offerings_repo.list_taxonomy_nodes_with_names(
-            session, offering.id
-        )
-        pricing = await offerings_repo.get_pricing(session, offering.id)
-        media = await offerings_repo.list_media(session, offering.id)
+        nodes = nodes_by_offering.get(offering.id, [])
+        pricing = pricing_by_offering.get(offering.id)
+        media = media_by_offering.get(offering.id, [])
         offering_summaries.append(
             {
                 "offering": offering,
@@ -149,32 +250,52 @@ async def get_public_organization(session: AsyncSession, slug: str) -> dict | No
             }
         )
 
-    cert_types = {
-        t.id: t for t in await credentials_repo.list_certification_types(session)
-    }
+    cert_types = {t.id: t for t in cert_type_rows}
     org_media = [
         {
             "media_type": m.media_type,
             "url": public_url(bucket=MEDIA_BUCKET, path=m.storage_path),
+            "logo_shape": m.logo_shape,
         }
-        for m in await profile_repo.list_media(session, org.id)
+        for m in media_rows
     ]
+
+    # list_locations ya ordena is_headquarters primero (repositories/
+    # organization_profile.py) — si no hay ninguna marcada como casa matriz,
+    # la primera ubicación activa es la mejor aproximación disponible. Esta
+    # sí depende del resultado de `locations`, así que no puede ir en el
+    # gather de arriba — es la única lectura que queda secuencial.
+    headquarters = None
+    primary_location = next(iter(locations), None)
+    if primary_location is not None and primary_location.admin_division_id is not None:
+        async with session_for_user(user_id) as session:
+            ancestors = await reference_repo.get_admin_division_ancestors(
+                session, primary_location.admin_division_id
+            )
+        headquarters = {
+            "region": next(
+                (a["name"] for a in ancestors if a["level_name"] == "REGION"), None
+            ),
+            "comuna": next(
+                (a["name"] for a in ancestors if a["level_name"] == "COMUNA"), None
+            ),
+        }
 
     return {
         "organization": org,
-        "locations": await profile_repo.list_locations(session, org.id),
-        "contacts": await profile_repo.list_contacts(session, org.id),
+        "locations": locations,
+        "headquarters": headquarters,
+        "contacts": contacts,
         "media": org_media,
-        "industries": await profile_repo.list_industries(session, org.id),
-        "territories": await profile_repo.list_territories(session, org.id),
+        "industries": industries,
+        "economic_activities": economic_activities,
+        "territories": territories,
         "offerings": offering_summaries,
-        "certifications": await credentials_repo.list_certifications(session, org.id),
+        "certifications": certifications,
         "certification_types": cert_types,
-        "client_references": await credentials_repo.list_client_references(
-            session, org.id
-        ),
-        "case_studies": await credentials_repo.list_case_studies(session, org.id),
-        "badges": await badges_repo.list_org_badges(session, org.id),
+        "client_references": client_references,
+        "case_studies": case_studies,
+        "badges": badges,
     }
 
 

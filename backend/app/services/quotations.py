@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 from app.core.file_validation import matches_pdf
 from app.core.storage import StorageError, create_signed_url, upload_object
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.repositories import invitations as invitations_repo
 from app.repositories import quotations as quotations_repo
 from app.repositories import sourcing as sourcing_repo
@@ -37,7 +37,7 @@ PERM_OPEN_BIDS = "sourcing_event.open_bids"
 DOCUMENTS_BUCKET = "org-documents"
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
-_PARTICIPATING_STATUSES = ("INTERESTED", "PARTICIPATING", "QUOTED")
+_PARTICIPATING_STATUSES = ("INTERESTED", "PARTICIPATING", "QUOTED", "NEGOTIATING")
 
 
 class QuotationError(Exception):
@@ -143,35 +143,45 @@ async def submit_revision(
     if not items:
         raise QuotationValidationError("La cotización necesita al menos una línea")
 
-    async with session_for_user(user_id) as db:
-        invitation = await invitations_repo.get_by_event_and_supplier(
-            db, sourcing_event_id, organization_id
-        )
-        if invitation is None or invitation.status not in _PARTICIPATING_STATUSES:
-            raise QuotationPermissionError(
-                "Esta organización no tiene una invitación activa para cotizar en este evento"
-            )
-
-        if round_type == "INITIAL":
-            deadline = await quotations_repo.get_bid_deadline(db, sourcing_event_id)
-            if deadline is not None and datetime.now(timezone.utc) > deadline:
-                raise QuotationValidationError("El plazo para cotizar ya venció")
+    async def _bid_deadline(db):
         # round_type COUNTER/BAFO: el deadline relevante es el de la ronda de
         # negociación (negotiation_rounds.deadline), no el BID_DEADLINE del
         # evento — la policy de RLS (0061) ya lo exige antes de aceptar el
         # INSERT, así que un envío tardío falla ahí, no acá.
+        if round_type == "INITIAL":
+            return await quotations_repo.get_bid_deadline(db, sourcing_event_id)
+        return None
 
-        event = await sourcing_repo.get_event(db, sourcing_event_id)
-        if event is None:
-            raise QuotationNotFoundError("Evento no encontrado")
+    # Las cuatro solo necesitan sourcing_event_id/organization_id, ya
+    # conocidos — ninguna depende del resultado de otra — van en paralelo.
+    invitation, deadline, event, event_items = await gather_for_user(
+        user_id,
+        lambda db: invitations_repo.get_by_event_and_supplier(
+            db, sourcing_event_id, organization_id
+        ),
+        _bid_deadline,
+        lambda db: sourcing_repo.get_event(db, sourcing_event_id),
+        lambda db: sourcing_repo.list_items(db, sourcing_event_id),
+    )
+    if invitation is None or invitation.status not in _PARTICIPATING_STATUSES:
+        raise QuotationPermissionError(
+            "Esta organización no tiene una invitación activa para cotizar en este evento"
+        )
+    if (
+        round_type == "INITIAL"
+        and deadline is not None
+        and datetime.now(timezone.utc) > deadline
+    ):
+        raise QuotationValidationError("El plazo para cotizar ya venció")
+    if event is None:
+        raise QuotationNotFoundError("Evento no encontrado")
 
-        valid_item_ids = {
-            i.id for i in await sourcing_repo.list_items(db, sourcing_event_id)
-        }
-        for item in items:
-            if item["sourcing_event_item_id"] not in valid_item_ids:
-                raise QuotationValidationError("Una línea no corresponde a este evento")
+    valid_item_ids = {i.id for i in event_items}
+    for item in items:
+        if item["sourcing_event_item_id"] not in valid_item_ids:
+            raise QuotationValidationError("Una línea no corresponde a este evento")
 
+    async with session_for_user(user_id) as db:
         quotation = await quotations_repo.get_or_create(
             db,
             sourcing_event_id=sourcing_event_id,

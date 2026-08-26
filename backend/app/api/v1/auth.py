@@ -7,12 +7,14 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from app.api.deps import CurrentUserId
 from app.core.config import settings
 from app.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     MembershipOut,
     MeResponse,
     RegisterRequest,
     RegisterResponse,
     TokenResponse,
+    UpdateProfileRequest,
     UserOut,
 )
 from app.services import auth as auth_service
@@ -169,3 +171,49 @@ async def me(user_id: CurrentUserId) -> MeResponse:
         ),
         is_platform_admin=result.is_platform_admin,
     )
+
+
+@router.patch("/me", response_model=MeResponse)
+async def update_me(
+    payload: UpdateProfileRequest, user_id: CurrentUserId
+) -> MeResponse:
+    try:
+        result = await auth_service.update_profile(
+            user_id, first_name=payload.first_name, last_name=payload.last_name
+        )
+    except auth_service.AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+    return MeResponse(
+        user=UserOut(
+            id=result.user_id,
+            email=result.email,
+            first_name=result.first_name,
+            last_name=result.last_name,
+            full_name=result.full_name,
+            locale=result.locale,
+            last_org_id=result.last_org_id,
+            memberships=[_membership_out(m) for m in result.memberships],
+        ),
+        is_platform_admin=result.is_platform_admin,
+    )
+
+
+@router.post(
+    "/change-password", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def change_password(
+    payload: ChangePasswordRequest, user_id: CurrentUserId
+) -> None:
+    try:
+        await auth_service.change_password(
+            user_id,
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+        )
+    except auth_service.AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc

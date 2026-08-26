@@ -31,6 +31,9 @@ FulfillmentDecision = Literal["APPROVED", "OBSERVED", "REJECTED"]
 EnrollmentDecision = Literal["ACCREDITED", "OBSERVED", "REJECTED"]
 
 
+RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
 class ProgramOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -39,6 +42,11 @@ class ProgramOut(BaseModel):
     name: str
     description: str | None
     owner_scope: str
+    owner_organization_id: UUID | None = None
+    applies_to_taxonomy_node_id: UUID | None = None
+    applies_to_industry_id: UUID | None = None
+    applies_to_risk_level: RiskLevel | None = None
+    country_code: str | None = None
     validity_months: int
     is_active: bool
 
@@ -80,6 +88,7 @@ class EnrollmentOut(BaseModel):
     program_id: UUID
     program_code: str
     program_name: str
+    program_owner_scope: str
     status: EnrollmentStatus
     completion_pct: int
     valid_from: date | None
@@ -165,7 +174,31 @@ class CreatedOut(BaseModel):
     id: UUID
 
 
-class CreateProgramRequest(BaseModel):
+class CertificateOut(BaseModel):
+    organization_legal_name: str
+    organization_rut: str | None
+    program_name: str
+    program_code: str
+    program_owner_scope: str
+    status: EnrollmentStatus
+    is_accredited: bool
+    valid_from: date | None
+    valid_until: date | None
+    folio: str
+    issued_at: datetime
+
+
+class ProgramAppliesToMixin(BaseModel):
+    """Filtros opcionales de relevancia (fase 9.4) — nunca bloquean
+    postulación ni matching, solo ordenan/sugieren."""
+
+    applies_to_taxonomy_node_id: UUID | None = None
+    applies_to_industry_id: UUID | None = None
+    applies_to_risk_level: RiskLevel | None = None
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+
+
+class CreateProgramRequest(ProgramAppliesToMixin):
     code: str = Field(min_length=2, max_length=60)
     name: str = Field(min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=2000)

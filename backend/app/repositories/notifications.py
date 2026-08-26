@@ -23,17 +23,25 @@ async def list_active_member_user_ids(
     return [row[0] for row in result]
 
 
-async def get_disabled_event_types(
-    session: AsyncSession, user_id: UUID, channel: str
-) -> set[str]:
+async def get_users_with_type_disabled(
+    session: AsyncSession, user_ids: list[UUID], channel: str, event_type: str
+) -> set[UUID]:
+    """De `user_ids`, cuáles deshabilitaron `event_type` en `channel`.
+
+    Una sola query para todo el lote en vez de `get_disabled_event_types`
+    por usuario — es lo que evita el N+1 de `notify_org`.
+    """
+    if not user_ids:
+        return set()
     result = await session.execute(
-        text(
-            "select event_type from public.notification_preferences "
-            "where user_id = :user_id and channel = :channel and enabled = false"
-        ),
-        {"user_id": str(user_id), "channel": channel},
+        select(NotificationPreference.user_id).where(
+            NotificationPreference.user_id.in_(user_ids),
+            NotificationPreference.channel == channel,
+            NotificationPreference.event_type == event_type,
+            NotificationPreference.enabled.is_(False),
+        )
     )
-    return {row[0] for row in result}
+    return set(result.scalars())
 
 
 async def create_notification(session: AsyncSession, **fields: object) -> Notification:
@@ -43,13 +51,35 @@ async def create_notification(session: AsyncSession, **fields: object) -> Notifi
     return notification
 
 
+async def create_notifications_bulk(
+    session: AsyncSession, *, recipient_ids: list[UUID], **fields: object
+) -> None:
+    """Un solo `flush()` para todos los destinatarios, en vez de uno por
+    fila — así `notify_org` no paga un round trip por miembro."""
+    if not recipient_ids:
+        return
+    session.add_all(
+        Notification(recipient_id=recipient_id, **fields) for recipient_id in recipient_ids
+    )
+    await session.flush()
+
+
 async def list_notifications(
-    session: AsyncSession, user_id: UUID, *, unread_only: bool = False
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    unread_only: bool = False,
+    limit: int = 50,
 ) -> list[Notification]:
+    # Sin limit acá, GET /api/notifications (la campanita, disparada en cada
+    # carga de página) devolvía el historial completo del usuario — crece sin
+    # tope con el tiempo. El índice notifications_recipient_idx (recipient_id,
+    # created_at desc, ver 0051_notifications.sql) ya está pensado para este
+    # order_by + limit.
     stmt = select(Notification).where(Notification.recipient_id == user_id)
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
-    stmt = stmt.order_by(Notification.created_at.desc())
+    stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)
     result = await session.execute(stmt)
     return list(result.scalars())
 

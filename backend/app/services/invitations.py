@@ -95,7 +95,8 @@ async def list_invitations(
     *, user_id: UUID, organization_id: UUID, sourcing_event_id: UUID
 ) -> list:
     async with session_for_user(user_id) as db:
-        await invitations_repo.has_permission(db, organization_id, PERM_READ)
+        if not await invitations_repo.has_permission(db, organization_id, PERM_READ):
+            raise InvitationPermissionError("Sin permiso para ver invitaciones")
         return await invitations_repo.list_for_event(db, sourcing_event_id)
 
 
@@ -215,6 +216,13 @@ async def upsert_nda(
 async def list_my_invitations(*, user_id: UUID, organization_id: UUID) -> list[dict]:
     async with session_for_user(user_id) as db:
         return await invitations_repo.list_for_supplier(db, organization_id)
+
+
+async def list_sent_invitations(*, user_id: UUID, organization_id: UUID) -> list[dict]:
+    async with session_for_user(user_id) as db:
+        if not await invitations_repo.has_permission(db, organization_id, PERM_READ):
+            raise InvitationPermissionError("Sin permiso para ver invitaciones")
+        return await invitations_repo.list_for_buyer_organization(db, organization_id)
 
 
 async def get_invitation_detail(

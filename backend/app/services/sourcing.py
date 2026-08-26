@@ -12,7 +12,8 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
+from app.repositories import accreditation as accreditation_repo
 from app.repositories import awards as awards_repo
 from app.repositories import invitations as invitations_repo
 from app.repositories import requirements as requirements_repo
@@ -55,10 +56,33 @@ async def _get_owned_event(db, event_id: UUID, organization_id: UUID):
     return event
 
 
-async def list_events(*, user_id: UUID, organization_id: UUID) -> list:
+async def _validate_accreditation_program(
+    db, organization_id: UUID, program_id: object
+) -> None:
+    """requires_accreditation_program_id/accreditation_program_id era hasta
+    ahora una FK completamente libre: cualquier comprador podía exigir el
+    programa PRIVADO (owner_scope=ORGANIZATION) de OTRO comprador al crear
+    un evento o un criterio, sin ninguna validación — hueco real, no solo
+    teórico, desde que fase 9 permite crear programas propios."""
+    if program_id is None:
+        return
+    assert isinstance(program_id, UUID)
+    program = await accreditation_repo.get_program(db, program_id)
+    if program is None:
+        raise SourcingNotFoundError("Programa de acreditación no encontrado")
+    if (
+        program.owner_scope == "ORGANIZATION"
+        and program.owner_organization_id != organization_id
+    ):
+        raise SourcingValidationError(
+            "No se puede exigir un programa de acreditación de otra organización"
+        )
+
+
+async def list_events_with_stage(*, user_id: UUID, organization_id: UUID) -> list[dict]:
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_READ)
-        return await sourcing_repo.list_events(db, organization_id)
+        return await sourcing_repo.list_events_with_stage(db, organization_id)
 
 
 async def get_event_detail(
@@ -78,20 +102,31 @@ async def get_event_detail(
     repetir esa decisión en Python. El chequeo de `sourcing_event.read` solo
     aplica cuando quien pregunta ES el comprador dueño; para el proveedor,
     RLS ya es la única puerta."""
-    async with session_for_user(user_id) as db:
-        event = await sourcing_repo.get_event(db, event_id)
-        if event is None:
-            raise SourcingNotFoundError("Evento no encontrado")
-        if event.organization_id == organization_id:
+    # Las seis lecturas solo necesitan `event_id`, ya conocido — ninguna
+    # depende del resultado de otra — así que van en paralelo en vez de
+    # encadenadas.
+    event, lots, items, stages, documents, criteria = await gather_for_user(
+        user_id,
+        lambda db: sourcing_repo.get_event(db, event_id),
+        lambda db: sourcing_repo.list_lots(db, event_id),
+        lambda db: sourcing_repo.list_items(db, event_id),
+        lambda db: sourcing_repo.list_stages(db, event_id),
+        lambda db: sourcing_repo.list_documents(db, event_id),
+        lambda db: sourcing_repo.list_criteria(db, event_id),
+    )
+    if event is None:
+        raise SourcingNotFoundError("Evento no encontrado")
+    if event.organization_id == organization_id:
+        async with session_for_user(user_id) as db:
             await _require(db, organization_id, PERM_READ)
-        return {
-            "event": event,
-            "lots": await sourcing_repo.list_lots(db, event_id),
-            "items": await sourcing_repo.list_items(db, event_id),
-            "stages": await sourcing_repo.list_stages(db, event_id),
-            "documents": await sourcing_repo.list_documents(db, event_id),
-            "criteria": await sourcing_repo.list_criteria(db, event_id),
-        }
+    return {
+        "event": event,
+        "lots": lots,
+        "items": items,
+        "stages": stages,
+        "documents": documents,
+        "criteria": criteria,
+    }
 
 
 async def create_event(
@@ -107,6 +142,9 @@ async def create_event(
         await _require(db, organization_id, PERM_CREATE)
         await entitlements_service.assert_entitlement(
             organization_id, "sourcing_event.create"
+        )
+        await _validate_accreditation_program(
+            db, organization_id, fields.get("requires_accreditation_program_id")
         )
 
         requirement = None
@@ -141,6 +179,9 @@ async def update_event(
         event = await _get_owned_event(db, event_id, organization_id)
         if event.status != "DRAFT":
             raise SourcingValidationError("Solo se puede editar un evento en borrador")
+        await _validate_accreditation_program(
+            db, organization_id, fields.get("requires_accreditation_program_id")
+        )
         await sourcing_repo.update_event(event, **fields)
 
 
@@ -171,6 +212,34 @@ async def cancel_event(*, user_id: UUID, organization_id: UUID, event_id: UUID) 
         if event.status == "CANCELLED":
             raise SourcingValidationError("El evento ya está cancelado")
         await sourcing_repo.update_event(event, status="CANCELLED")
+
+
+async def declare_void(
+    *,
+    user_id: UUID,
+    organization_id: UUID,
+    event_id: UUID,
+    reason: str | None = None,
+) -> None:
+    """"Desierta": el comprador decide a mano que ninguna cotización calificó.
+
+    Sin corredor de tareas programadas en el backend, un plazo vencido no
+    puede disparar esto solo — es siempre una acción explícita del comprador,
+    solo válida mientras el evento sigue PUBLISHED (una vez que
+    close_event() lo saca de ahí hacia AWARDED/CLOSED, declarar desierta ya
+    no tiene sentido; reusa PERM_CANCEL, mismo gesto de "terminar el proceso
+    sin adjudicar" que cancelar).
+    """
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_CANCEL)
+        event = await _get_owned_event(db, event_id, organization_id)
+        if event.status != "PUBLISHED":
+            raise SourcingValidationError(
+                "Solo un evento publicado se puede declarar desierto"
+            )
+        await sourcing_repo.update_event(
+            event, status="VOID", void_reason=reason or None
+        )
 
 
 async def add_lot(
@@ -219,6 +288,9 @@ async def add_criterion(
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_CREATE)
         await _get_owned_event(db, event_id, organization_id)
+        await _validate_accreditation_program(
+            db, organization_id, fields.get("accreditation_program_id")
+        )
         criterion = await sourcing_repo.add_criterion(
             db, sourcing_event_id=event_id, **fields
         )

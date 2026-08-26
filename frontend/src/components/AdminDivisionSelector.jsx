@@ -37,7 +37,11 @@ export function AdminDivisionSelector({ onAdd, disabled }) {
   function handleAdd() {
     const divisionId = comunaId || provinceId || regionId;
     if (!divisionId) return;
-    onAdd(divisionId);
+    const name =
+      comunas.find((c) => c.id === divisionId)?.name ||
+      provinces.find((p) => p.id === divisionId)?.name ||
+      regions.find((r) => r.id === divisionId)?.name;
+    onAdd(divisionId, name);
     setRegionId('');
   }
 

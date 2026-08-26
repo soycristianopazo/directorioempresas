@@ -267,3 +267,27 @@ async def withdraw_invitation(
         )
     except invitations_service.InvitationError as exc:
         raise _as_http_exception(exc) from exc
+
+
+# ─── Lado comprador: vista agregada (todos los eventos) ───────────────────────
+#
+# list_invitations() de más arriba está anidado bajo un event_id — sirve para
+# la ficha de UN proceso. Esta es la vista "a quién invité en total", sin
+# entrar evento por evento — pestaña "Enviadas" de /empresa/invitaciones.
+
+sent_router = APIRouter(
+    prefix="/organizations/{organization_id}/sent-invitations", tags=["invitations"]
+)
+
+
+@sent_router.get("", response_model=list[dict])
+async def list_sent_invitations(
+    organization_id: UUID, user_id: CurrentUserId
+) -> list[dict]:
+    try:
+        rows = await invitations_service.list_sent_invitations(
+            user_id=user_id, organization_id=organization_id
+        )
+    except invitations_service.InvitationError as exc:
+        raise _as_http_exception(exc) from exc
+    return rows

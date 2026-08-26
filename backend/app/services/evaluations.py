@@ -15,7 +15,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import members as members_repo
 from app.repositories import quotations as quotations_repo
@@ -217,6 +217,17 @@ async def list_committee(
 # ─── Autoservicio del evaluador ─────────────────────────────────────────────
 
 
+async def _fetch_my_evaluation(db, *, sourcing_event_id, quotation_id, member_id):
+    evaluation = await evaluations_repo.get_or_create_evaluation(
+        db,
+        sourcing_event_id=sourcing_event_id,
+        quotation_id=quotation_id,
+        organization_member_id=member_id,
+    )
+    scores = await evaluations_repo.list_scores(db, evaluation.id)
+    return quotation_id, evaluation, scores
+
+
 async def get_my_evaluation_view(
     *, user_id: UUID, organization_id: UUID, sourcing_event_id: UUID
 ) -> dict:
@@ -231,61 +242,80 @@ async def get_my_evaluation_view(
         dimensions = {a.dimension for a in assignments}
         can_view_commercial = any(a.can_view_commercial for a in assignments)
 
-        setup = await evaluations_repo.get_setup(db, sourcing_event_id)
-        criteria = [
-            c
-            for c in (setup.criteria_snapshot if setup else [])
-            if c["dimension"] in dimensions
-        ]
-
-        items = await evaluations_repo.list_items_for_technical_evaluation(
+    # Las cuatro (cinco si puede ver lo comercial) solo necesitan
+    # sourcing_event_id, ya conocido — ninguna depende de otra — van en
+    # paralelo en vez de encadenadas.
+    reads = [
+        lambda db: evaluations_repo.get_setup(db, sourcing_event_id),
+        lambda db: evaluations_repo.list_items_for_technical_evaluation(
             db, sourcing_event_id
-        )
-        responses = await evaluations_repo.list_responses_for_technical_evaluation(
+        ),
+        lambda db: evaluations_repo.list_responses_for_technical_evaluation(
             db, sourcing_event_id
-        )
-        documents = await evaluations_repo.list_documents_for_technical_evaluation(
+        ),
+        lambda db: evaluations_repo.list_documents_for_technical_evaluation(
             db, sourcing_event_id
-        )
-        revisions = []
-        if can_view_commercial:
-            revisions = await evaluations_repo.list_revisions_for_commercial_evaluation(
+        ),
+    ]
+    if can_view_commercial:
+        reads.append(
+            lambda db: evaluations_repo.list_revisions_for_commercial_evaluation(
                 db, sourcing_event_id
             )
+        )
+    setup, items, responses, documents, *rest = await gather_for_user(user_id, *reads)
+    revisions = rest[0] if rest else []
 
-        quotation_ids = {i["quotation_id"] for i in items}
-        my_evaluations: dict[str, dict] = {}
-        for quotation_id in quotation_ids:
-            evaluation = await evaluations_repo.get_or_create_evaluation(
-                db,
-                sourcing_event_id=sourcing_event_id,
-                quotation_id=quotation_id,
-                organization_member_id=member.id,
+    criteria = [
+        c
+        for c in (setup.criteria_snapshot if setup else [])
+        if c["dimension"] in dimensions
+    ]
+
+    # Cada cotización es independiente de las demás (get_or_create_evaluation
+    # + list_scores no comparten estado entre una y otra) — antes eran hasta
+    # 2 round trips por cotización, uno tras otro.
+    quotation_ids = {i["quotation_id"] for i in items}
+    evaluation_results = await gather_for_user(
+        user_id,
+        *(
+            (
+                lambda db, qid=quotation_id: _fetch_my_evaluation(
+                    db,
+                    sourcing_event_id=sourcing_event_id,
+                    quotation_id=qid,
+                    member_id=member.id,
+                )
             )
-            scores = await evaluations_repo.list_scores(db, evaluation.id)
-            my_evaluations[str(quotation_id)] = {
-                "evaluation_id": evaluation.id,
-                "status": evaluation.status,
-                "overall_comment": evaluation.overall_comment,
-                "scores": [
-                    {
-                        "evaluation_criterion_id": s.evaluation_criterion_id,
-                        "score": float(s.score),
-                        "comment": s.comment,
-                    }
-                    for s in scores
-                ],
-            }
-
-        return {
-            "can_view_commercial": can_view_commercial,
-            "criteria": criteria,
-            "items": items,
-            "responses": responses,
-            "documents": documents,
-            "revisions": revisions,
-            "evaluations": my_evaluations,
+            for quotation_id in quotation_ids
+        ),
+    )
+    my_evaluations = {
+        str(quotation_id): {
+            "evaluation_id": evaluation.id,
+            "status": evaluation.status,
+            "overall_comment": evaluation.overall_comment,
+            "scores": [
+                {
+                    "evaluation_criterion_id": s.evaluation_criterion_id,
+                    "score": float(s.score),
+                    "comment": s.comment,
+                }
+                for s in scores
+            ],
         }
+        for quotation_id, evaluation, scores in evaluation_results
+    }
+
+    return {
+        "can_view_commercial": can_view_commercial,
+        "criteria": criteria,
+        "items": items,
+        "responses": responses,
+        "documents": documents,
+        "revisions": revisions,
+        "evaluations": my_evaluations,
+    }
 
 
 async def submit_score(
@@ -308,6 +338,26 @@ async def submit_score(
         )
         if not assignments:
             raise EvaluationPermissionError("No tiene una asignación en este evento")
+
+        # get_my_evaluation_view ya filtra los criterios que se muestran por
+        # dimensión asignada, pero eso es solo del lado de lectura — sin este
+        # chequeo, un evaluador podía enviar un score para un criterio de una
+        # dimensión que no le corresponde llamando este endpoint directo.
+        setup = await evaluations_repo.get_setup(db, sourcing_event_id)
+        criterion = next(
+            (
+                c
+                for c in (setup.criteria_snapshot if setup else [])
+                if c["id"] == str(evaluation_criterion_id)
+            ),
+            None,
+        )
+        if criterion is None:
+            raise EvaluationNotFoundError("Criterio no encontrado")
+        if criterion["dimension"] not in {a.dimension for a in assignments}:
+            raise EvaluationPermissionError(
+                "No tiene asignada la dimensión de este criterio"
+            )
 
         evaluation = await evaluations_repo.get_or_create_evaluation(
             db,
@@ -377,8 +427,14 @@ async def run_comparator(
         if setup is None:
             raise EvaluationValidationError("El evento no tiene una plantilla aplicada")
 
-        rows = await evaluations_repo.list_scores_for_event(db, sourcing_event_id)
-        quotations = await quotations_repo.list_for_event(db, sourcing_event_id)
+    # Independientes entre sí (ninguna usa el resultado de la otra) — en
+    # paralelo.
+    rows, quotations = await gather_for_user(
+        user_id,
+        lambda db: evaluations_repo.list_scores_for_event(db, sourcing_event_id),
+        lambda db: quotations_repo.list_for_event(db, sourcing_event_id),
+    )
+    async with session_for_user(user_id) as db:
         supplier_by_quotation = {
             str(q["id"]): str(q["supplier_organization_id"]) for q in quotations
         }

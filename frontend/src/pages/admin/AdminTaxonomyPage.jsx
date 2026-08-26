@@ -356,6 +356,8 @@ function AttributesSection({ node, onReload }) {
     setLoading(true);
     try {
       setAttributes(await getNodeAttributes(node.id));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar los atributos');
     } finally {
       setLoading(false);
     }

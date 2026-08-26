@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 
 from app.api.deps import CurrentUserId
+from app.api.public import build_profile_context, templates
 from app.schemas.organization import (
     CreateOrganizationRequest,
     OrganizationOut,
@@ -51,6 +53,26 @@ async def get_organization(
             status_code=status.HTTP_404_NOT_FOUND, detail="Organización no encontrada"
         )
     return OrganizationOut(**detail)
+
+
+@router.get("/{organization_id}/preview", response_class=HTMLResponse)
+async def preview_organization(
+    organization_id: UUID, request: Request, user_id: CurrentUserId
+) -> HTMLResponse:
+    """Renderiza la MISMA plantilla que `/proveedores/{slug}` (perfil
+    público), pero autenticada — así el dueño ve exactamente lo que verá un
+    visitante, sin depender de que el perfil ya esté publicado y sin que
+    cuente como una visita real (no pasa por record_profile_view)."""
+    profile = await org_service.get_own_profile_preview(
+        user_id=user_id, organization_id=organization_id
+    )
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Organización no encontrada"
+        )
+    return templates.TemplateResponse(
+        request, "provider_profile.html", build_profile_context(profile, preview=True)
+    )
 
 
 @router.put(

@@ -29,7 +29,11 @@ export default function EvaluationTemplatesPage() {
   const [criteria, setCriteria] = useState([emptyCriterion()]);
 
   async function load() {
-    setTemplates(await listTemplates(activeOrg.id));
+    try {
+      setTemplates(await listTemplates(activeOrg.id));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las plantillas de evaluación');
+    }
   }
 
   useEffect(() => {

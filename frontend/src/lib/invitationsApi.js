@@ -29,6 +29,11 @@ export async function inviteSupplier(organizationId, eventId, payload) {
   return data.id;
 }
 
+export async function listSentInvitations(organizationId) {
+  const { data } = await api.get(`/organizations/${organizationId}/sent-invitations`);
+  return data;
+}
+
 export async function disqualifyInvitation(organizationId, eventId, invitationId, reason) {
   await api.post(
     `/organizations/${organizationId}/sourcing-events/${eventId}/invitations/${invitationId}/disqualify`,

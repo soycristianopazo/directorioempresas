@@ -20,6 +20,21 @@ export async function publishOrganization(organizationId) {
   await api.post(`/organizations/${organizationId}/publish`);
 }
 
+/** HTML de la misma plantilla que ve un visitante en /proveedores/{slug},
+ * pero renderizada con la sesión del dueño — funciona aunque el perfil
+ * todavía no esté publicado. Se inyecta vía srcDoc en un iframe (no se
+ * navega directo) para que el fetch use el Authorization Bearer normal. */
+export async function getOrganizationPreviewHtml(organizationId) {
+  // El agregado público (industrias, certificaciones, badges, ofertas...)
+  // hace varias idas y vueltas a la base — más lento que un endpoint típico
+  // de la SPA, así que se le da más margen que el timeout global de 15s.
+  const { data } = await api.get(`/organizations/${organizationId}/preview`, {
+    responseType: 'text',
+    timeout: 30000,
+  });
+  return data;
+}
+
 export async function switchOrganization(organizationId) {
   await api.post('/organizations/switch', { organization_id: organizationId });
 }

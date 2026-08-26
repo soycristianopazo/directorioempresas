@@ -28,13 +28,29 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   font-family: var(--font-sans);
   background: var(--background);
   color: var(--foreground);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Empuja el footer al fondo incluso en páginas con poco contenido (ej. sin
+   resultados) — body es flex-column, main crece para llenar el espacio
+   sobrante y el footer queda pegado abajo en vez de subir pegado al
+   contenido. */
+main {
+  flex: 1;
 }
 
 a {
@@ -62,11 +78,15 @@ a {
 }
 
 .site-logo {
-  font-weight: 800;
-  font-size: 1.125rem;
-  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
   text-decoration: none;
   color: var(--foreground);
+}
+
+.site-logo img {
+  height: 3rem;
+  width: auto;
 }
 
 .site-nav {
@@ -75,14 +95,26 @@ a {
   gap: 1rem;
 }
 
-.site-nav a {
+.site-nav a:not(.btn) {
   text-decoration: none;
   font-size: 0.9rem;
   color: var(--muted-foreground);
 }
 
-.site-nav a:hover {
+.site-nav a:not(.btn):hover {
   color: var(--foreground);
+}
+
+@media (max-width: 640px) {
+  .site-header .container {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+
+  .site-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 /* ─── Botones ───────────────────────────────────────────────────────────── */
@@ -138,92 +170,56 @@ a {
   max-width: 40rem;
 }
 
-.search-form {
+/* Barra de filtros: buscador + 3 selects dependientes (categoría, industria,
+   región) + botón, todo en una fila arriba de los resultados — cada select
+   se auto-envía al cambiar (onchange="this.form.submit()") y el backend
+   recalcula tanto resultados como el conteo de las OTRAS dimensiones en base
+   a los filtros ya activos (facet_counts en repositories/search.py toma los
+   mismos filtros que la búsqueda), así que las opciones de un select
+   reflejan lo que ya filtraron los otros dos sin necesitar JS propio. */
+.filter-bar {
   display: flex;
-  gap: 0.5rem;
-  max-width: 40rem;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  max-width: 56rem;
 }
 
-.search-form input[type='text'] {
-  flex: 1;
+.filter-bar__search {
+  flex: 2 1 16rem;
+}
+
+.filter-bar input[type='text'],
+.filter-bar select {
   padding: 0.7rem 1rem;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  font-size: 0.95rem;
+  background: white;
+  font-size: 0.9rem;
   font-family: var(--font-sans);
+  color: var(--foreground);
+}
+
+.filter-bar select {
+  flex: 1 1 10rem;
 }
 
 /* ─── Layout de resultados ──────────────────────────────────────────────── */
 
-.discover-layout {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 2rem;
+.discover-results {
   padding: 2rem 0 4rem;
-  align-items: start;
 }
 
-@media (max-width: 800px) {
-  .discover-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.facet-group {
-  margin-bottom: 1.5rem;
-}
-
-.facet-group h3 {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted-foreground);
-  margin: 0 0 0.6rem;
-}
-
-.facet-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.facet-list a {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  text-decoration: none;
-  font-size: 0.875rem;
-  color: var(--foreground);
-  padding: 0.3rem 0.5rem;
-  border-radius: 0.4rem;
-}
-
-.facet-list a:hover {
-  background: var(--secondary);
-}
-
-.facet-list a.active {
-  background: var(--brand-teal);
-  color: white;
-}
-
-.facet-list .count {
-  color: var(--muted-foreground);
-  font-size: 0.8rem;
-}
-
-.facet-list a.active .count {
-  color: white;
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1.25rem;
 }
 
 .active-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-bottom: 1rem;
+  margin-top: 1rem;
 }
 
 .chip {
@@ -247,18 +243,38 @@ a {
 /* ─── Tarjeta de resultado ──────────────────────────────────────────────── */
 
 .result-card {
-  display: block;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem;
-  margin-bottom: 1rem;
+  overflow: hidden;
   text-decoration: none;
   color: var(--foreground);
-  transition: border-color 0.15s;
+  background: white;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .result-card:hover {
   border-color: var(--brand-teal);
+  box-shadow: 0 4px 16px -8px rgb(0 0 0 / 0.15);
+}
+
+.result-card__image {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  background: var(--secondary);
+}
+
+.result-card__image--placeholder {
+  background: linear-gradient(135deg, var(--brand-sky) 0%, var(--secondary) 100%);
+}
+
+.result-card__body {
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .result-card .offering-name {
@@ -296,6 +312,32 @@ a {
   color: var(--muted-foreground);
 }
 
+.badge-deal {
+  background: #dc2626;
+  color: white;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.badge-deal-price {
+  background: #fef2f2;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.badge-deal-price s {
+  color: var(--muted-foreground);
+  font-weight: 400;
+  margin-right: 0.25rem;
+}
+
+.badge-deal-stock,
+.badge-deal-countdown {
+  background: #fff7ed;
+  color: #c2410c;
+  font-weight: 600;
+}
+
 .empty-state {
   padding: 3rem 1rem;
   text-align: center;
@@ -310,12 +352,44 @@ a {
 
 /* ─── Perfil de proveedor ───────────────────────────────────────────────── */
 
+.preview-banner {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
 .profile-header {
   display: flex;
   gap: 1.5rem;
   align-items: flex-start;
   padding: 2.5rem 0 2rem;
   border-bottom: 1px solid var(--border);
+}
+
+.profile-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.profile-title-row h1 {
+  margin: 0;
+}
+
+.badge-accredited {
+  background: #16a34a;
+  color: white;
+  font-weight: 600;
+}
+
+.badge-not-accredited {
+  background: var(--secondary);
+  color: var(--muted-foreground);
 }
 
 .profile-logo {
@@ -327,6 +401,14 @@ a {
   padding: 0.5rem;
   background: white;
   flex-shrink: 0;
+}
+
+/* Wordmark/logotipo horizontal: caja panorámica en vez del cuadrado por
+   defecto — igual mantiene object-fit: contain, esto solo evita que un
+   logo ancho quede diminuto dentro de una caja pensada para un isotipo. */
+.profile-logo--horizontal {
+  width: 200px;
+  height: 64px;
 }
 
 .profile-header h1 {

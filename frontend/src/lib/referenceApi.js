@@ -28,3 +28,10 @@ export async function getAdminDivisions({ country = 'CL', parentId = null } = {}
   });
   return data;
 }
+
+export async function searchSiiEconomicActivities(q, { limit = 30 } = {}) {
+  const { data } = await api.get('/reference/sii-economic-activities', {
+    params: { q, limit },
+  });
+  return data;
+}

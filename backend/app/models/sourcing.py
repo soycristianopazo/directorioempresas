@@ -29,6 +29,9 @@ SourcingEventStatusEnum = ENUM(
     "DRAFT",
     "PUBLISHED",
     "CANCELLED",
+    "AWARDED",
+    "CLOSED",
+    "VOID",
     name="sourcing_event_status",
     schema="app",
     create_type=False,
@@ -104,6 +107,7 @@ class SourcingEvent(Base):
     status: Mapped[str] = mapped_column(
         SourcingEventStatusEnum, nullable=False, server_default="DRAFT"
     )
+    void_reason: Mapped[str | None] = mapped_column(Text)
 
     currency_code: Mapped[str | None] = mapped_column(
         CHAR(3), ForeignKey("currencies.code")

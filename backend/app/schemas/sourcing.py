@@ -11,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SourcingEventType = Literal["RFI", "RFQ", "RFP", "QUICK_BUY", "DIRECT_AWARD"]
 SourcingBidMode = Literal["OPEN", "SEALED"]
-SourcingEventStatus = Literal["DRAFT", "PUBLISHED", "CANCELLED"]
+SourcingEventStatus = Literal[
+    "DRAFT", "PUBLISHED", "CANCELLED", "AWARDED", "CLOSED", "VOID"
+]
 Visibility = Literal["PUBLIC", "REGISTERED", "BUYERS_ONLY", "INVITED_ONLY", "PRIVATE"]
 SourcingCriterionType = Literal[
     "ATTRIBUTE",
@@ -45,6 +47,10 @@ class CreateSourcingEventRequest(BaseModel):
     matching_weights: dict[str, float] | None = None
 
 
+class DeclareVoidRequest(BaseModel):
+    reason: str | None = None
+
+
 class UpdateSourcingEventRequest(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     description: str | None = None
@@ -71,6 +77,7 @@ class SourcingEventOut(BaseModel):
     visibility: Visibility
     bid_mode: SourcingBidMode
     status: SourcingEventStatus
+    void_reason: str | None
     currency_code: str | None
     estimated_amount: float | None
     requires_nda: bool
@@ -81,6 +88,14 @@ class SourcingEventOut(BaseModel):
     bid_opened_at: datetime | None
     bid_opened_by: UUID | None
     created_at: datetime
+
+
+class SourcingEventListOut(SourcingEventOut):
+    """`SourcingEventOut` + `stage`: publicar/match/evaluacion/negociacion/
+    adjudicacion — misma clave que los tabs de SourcingEventLayout.jsx,
+    calculada en `list_events_with_stage` (no una columna real)."""
+
+    stage: str
 
 
 class AddLotRequest(BaseModel):

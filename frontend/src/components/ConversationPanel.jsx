@@ -6,20 +6,29 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { getOrCreateConversation, listMessages, markConversationRead, sendMessage } from '@/lib/messagingApi';
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 2000;
 
 function formatTime(value) {
-  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'short', timeStyle: 'short' }).format(
-    new Date(value),
-  );
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'short', timeStyle: 'short' }).format(date);
 }
 
-/** Panel de mensajería compacto para una conversación atada a un contexto
- * (evento de sourcing, oferta, etc). Actualiza por polling — el proyecto no
- * tiene Realtime en el navegador (ver lib/messagingApi.js).
+/** Panel de mensajería compacto. Dos formas de abrir un hilo: pasando
+ * `contextType`/`contextId` (resuelve/crea la conversación de ese contexto —
+ * evento de sourcing, oferta, etc.) o pasando `conversationId` directo
+ * cuando ya se sabe cuál es (p. ej. seleccionada desde la bandeja de Chat).
+ * Actualiza por polling — el proyecto no tiene Realtime en el navegador (ver
+ * lib/messagingApi.js).
  */
-export function ConversationPanel({ organizationId, contextType, contextId, participantOrganizationIds }) {
-  const [conversationId, setConversationId] = useState(null);
+export function ConversationPanel({
+  organizationId,
+  contextType,
+  contextId,
+  participantOrganizationIds,
+  conversationId: conversationIdProp,
+}) {
+  const [conversationId, setConversationId] = useState(conversationIdProp ?? null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
@@ -27,8 +36,41 @@ export function ConversationPanel({ organizationId, contextType, contextId, part
   const listRef = useRef(null);
   const afterRef = useRef(null);
 
+  // Único punto de escritura del cursor de polling: tanto poll() como
+  // onSend() lo tocan, y una respuesta de poll que quedó en vuelo ANTES de
+  // un envío puede resolver DESPUÉS — sin este guard, sobreescribe el cursor
+  // hacia atrás y el próximo ciclo re-trae (y duplica) mensajes ya vistos.
+  function advanceAfter(candidate) {
+    if (!afterRef.current || new Date(candidate) > new Date(afterRef.current)) {
+      afterRef.current = candidate;
+    }
+  }
+
+  // Agrega filas evitando duplicados por id — misma causa (respuestas de
+  // poll fuera de orden) puede reintroducir un mensaje ya renderizado.
+  function appendMessages(rows) {
+    setMessages((prev) => {
+      const seen = new Set(prev.map((m) => m.id));
+      const fresh = rows.filter((m) => !seen.has(m.id));
+      return fresh.length ? [...prev, ...fresh] : prev;
+    });
+  }
+
   useEffect(() => {
-    if (!organizationId || !contextId) return;
+    if (!organizationId) return;
+
+    if (conversationIdProp) {
+      setConversationId(conversationIdProp);
+      setMessages([]);
+      afterRef.current = null;
+      setLoading(true);
+      markConversationRead(organizationId, conversationIdProp)
+        .catch(() => {})
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    if (!contextId) return;
     let cancelled = false;
     setLoading(true);
     setConversationId(null);
@@ -52,7 +94,7 @@ export function ConversationPanel({ organizationId, contextType, contextId, part
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organizationId, contextType, contextId]);
+  }, [organizationId, contextType, contextId, conversationIdProp]);
 
   useEffect(() => {
     if (!organizationId || !conversationId) return;
@@ -62,8 +104,8 @@ export function ConversationPanel({ organizationId, contextType, contextId, part
       try {
         const rows = await listMessages(organizationId, conversationId, afterRef.current);
         if (cancelled || rows.length === 0) return;
-        afterRef.current = rows[rows.length - 1].created_at;
-        setMessages((prev) => [...prev, ...rows]);
+        advanceAfter(rows[rows.length - 1].created_at);
+        appendMessages(rows);
       } catch {
         // Silencioso: se reintenta en el próximo ciclo de polling.
       }
@@ -86,9 +128,14 @@ export function ConversationPanel({ organizationId, contextType, contextId, part
     if (!body || !conversationId) return;
     setSending(true);
     try {
-      const msg = await sendMessage(organizationId, conversationId, body);
-      setMessages((prev) => [...prev, msg]);
-      afterRef.current = msg.created_at;
+      // POST /messages solo devuelve {id} (CreatedOut) — no el mensaje
+      // completo. Se arma acá un eco local optimista para que aparezca al
+      // instante en vez de esperar al próximo poll; el siguiente ciclo lo
+      // reconcilia con la fila real del servidor.
+      const { id } = await sendMessage(organizationId, conversationId, body);
+      const createdAt = new Date().toISOString();
+      appendMessages([{ id, body, created_at: createdAt }]);
+      advanceAfter(createdAt);
       setDraft('');
     } catch (error) {
       toast.error(error.response?.data?.detail || 'No se pudo enviar el mensaje');

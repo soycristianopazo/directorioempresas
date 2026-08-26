@@ -32,12 +32,37 @@ export async function createEvent(organizationId, payload) {
   return data.id;
 }
 
+/** PUT reemplaza el evento completo (UpdateSourcingEventRequest no es
+ * parcial) — `event` es el objeto ya cargado por getEvent(), `overrides`
+ * solo los campos que cambian. */
+export async function updateEvent(organizationId, eventId, event, overrides = {}) {
+  const merged = { ...event, ...overrides };
+  await api.put(`/organizations/${organizationId}/sourcing-events/${eventId}`, {
+    name: merged.name,
+    description: merged.description || null,
+    visibility: merged.visibility,
+    bid_mode: merged.bid_mode,
+    currency_code: merged.currency_code || null,
+    estimated_amount: merged.estimated_amount || null,
+    requires_nda: merged.requires_nda || false,
+    requires_accreditation_program_id: merged.requires_accreditation_program_id || null,
+    max_invitations: merged.max_invitations || null,
+    matching_weights: merged.matching_weights || null,
+  });
+}
+
 export async function publishEvent(organizationId, eventId) {
   await api.post(`/organizations/${organizationId}/sourcing-events/${eventId}/publish`);
 }
 
 export async function cancelEvent(organizationId, eventId) {
   await api.post(`/organizations/${organizationId}/sourcing-events/${eventId}/cancel`);
+}
+
+export async function declareVoid(organizationId, eventId, reason) {
+  await api.post(`/organizations/${organizationId}/sourcing-events/${eventId}/void`, {
+    reason: reason || null,
+  });
 }
 
 export async function addItem(organizationId, eventId, item) {

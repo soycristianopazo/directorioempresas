@@ -76,18 +76,22 @@ export default function CredentialsPage() {
   const [expandedCase, setExpandedCase] = useState(null);
 
   async function loadAll() {
-    const [types, certs, refs, cases, inds] = await Promise.all([
-      getCertificationTypes(),
-      listCertifications(activeOrg.id),
-      listClientReferences(activeOrg.id),
-      listCaseStudies(activeOrg.id),
-      getIndustries(),
-    ]);
-    setCertTypes(types);
-    setCertifications(certs);
-    setReferences(refs);
-    setCaseStudies(cases);
-    setIndustries(flatten(inds));
+    try {
+      const [types, certs, refs, cases, inds] = await Promise.all([
+        getCertificationTypes(),
+        listCertifications(activeOrg.id),
+        listClientReferences(activeOrg.id),
+        listCaseStudies(activeOrg.id),
+        getIndustries(),
+      ]);
+      setCertTypes(types);
+      setCertifications(certs);
+      setReferences(refs);
+      setCaseStudies(cases);
+      setIndustries(flatten(inds));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las credenciales');
+    }
   }
 
   useEffect(() => {
@@ -434,8 +438,12 @@ function CaseStudyDetail({ organizationId, caseStudyId }) {
   const fileInputRef = useRef(null);
 
   async function load() {
-    const mediaList = await listCaseStudyMedia(organizationId, caseStudyId);
-    setMedia(mediaList);
+    try {
+      const mediaList = await listCaseStudyMedia(organizationId, caseStudyId);
+      setMedia(mediaList);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo cargar el material del caso');
+    }
   }
 
   useEffect(() => {

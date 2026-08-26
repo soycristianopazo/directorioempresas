@@ -137,6 +137,7 @@ function LocationStep({ organizationId, onDone }) {
   useEffect(() => {
     getLocations(organizationId)
       .then((locs) => setExisting(locs[0] ?? null))
+      .catch((error) => toast.error(error.response?.data?.detail || 'No se pudo cargar la ubicación'))
       .finally(() => setLoading(false));
   }, [organizationId]);
 
@@ -201,6 +202,7 @@ function ContactStep({ organizationId, onDone }) {
   useEffect(() => {
     getContacts(organizationId)
       .then((contacts) => setExisting(contacts[0] ?? null))
+      .catch((error) => toast.error(error.response?.data?.detail || 'No se pudo cargar el contacto'))
       .finally(() => setLoading(false));
   }, [organizationId]);
 
@@ -290,6 +292,7 @@ function LogoStep({ organizationId, onDone }) {
   useEffect(() => {
     getMedia(organizationId)
       .then((media) => setLogo(media.find((m) => m.media_type === 'LOGO') ?? null))
+      .catch((error) => toast.error(error.response?.data?.detail || 'No se pudo cargar el logo'))
       .finally(() => setLoading(false));
   }, [organizationId]);
 
@@ -344,7 +347,11 @@ function IndustriesStep({ organizationId, onDone }) {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    setIndustries(await getOrganizationIndustries(organizationId));
+    try {
+      setIndustries(await getOrganizationIndustries(organizationId));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las industrias');
+    }
   }
 
   useEffect(() => {
@@ -389,7 +396,11 @@ function TerritoriesStep({ organizationId, onDone }) {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    setTerritories(await getOrganizationTerritories(organizationId));
+    try {
+      setTerritories(await getOrganizationTerritories(organizationId));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar los territorios');
+    }
   }
 
   useEffect(() => {
@@ -449,6 +460,7 @@ function FirstOfferingStep({ organizationId, onDone }) {
   useEffect(() => {
     listOfferings(organizationId)
       .then(setOfferings)
+      .catch((error) => toast.error(error.response?.data?.detail || 'No se pudieron cargar las ofertas'))
       .finally(() => setLoading(false));
   }, [organizationId]);
 
@@ -547,9 +559,13 @@ function CertificationsStep({ organizationId, completionPct, onFinish }) {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [types, certs] = await Promise.all([getCertificationTypes(), listCertifications(organizationId)]);
-    setCertTypes(types);
-    setCertifications(certs);
+    try {
+      const [types, certs] = await Promise.all([getCertificationTypes(), listCertifications(organizationId)]);
+      setCertTypes(types);
+      setCertifications(certs);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudieron cargar las certificaciones');
+    }
   }
 
   useEffect(() => {

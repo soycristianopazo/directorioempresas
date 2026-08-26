@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { CreditCard } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,6 +27,11 @@ export default function SubscriptionPage() {
       .then(([p, s]) => {
         setPlans(p);
         setSubscription(s);
+      })
+      .catch((error) => {
+        toast.error(
+          error.response?.data?.detail || 'No se pudo cargar la información de suscripción',
+        );
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps

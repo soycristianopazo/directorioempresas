@@ -13,13 +13,15 @@ acción específica vive acá, no en la policy.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from app.core import cache
 from app.core.file_validation import matches_declared_image_type, matches_pdf
 from app.core.storage import (
     StorageError,
@@ -28,12 +30,15 @@ from app.core.storage import (
     public_url,
     upload_object,
 )
-from app.db.rls import session_for_user
+from app.db.rls import gather_for_user, session_for_user
 from app.models.attribute import AttributeDefinition
 from app.models.offering import OfferingPricing
 from app.repositories import offerings as offerings_repo
 from app.services import search as search_service
-from app.services.completion import recompute_completion_pct
+from app.services.completion import (
+    recompute_completion_pct,
+    recompute_offering_completion_pct,
+)
 
 PERM_READ = "offering.read"
 PERM_WRITE = "offering.write"
@@ -51,6 +56,19 @@ _ALLOWED_IMAGE_TYPES = {
 }
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+
+_LIST_CACHE_TTL_SECONDS = 30
+_OFFERINGS_DENIED = object()
+
+
+def _offerings_cache_key(
+    organization_id: UUID, user_id: UUID, status: str | None
+) -> str:
+    return f"offerings:{organization_id}:{user_id}:{status or 'ALL'}"
+
+
+def _offerings_cache_prefix(organization_id: UUID) -> str:
+    return f"offerings:{organization_id}:"
 
 
 class OfferingError(Exception):
@@ -97,11 +115,25 @@ async def _get_owned_offering(db, offering_id: UUID, organization_id: UUID):
 async def list_offerings(
     *, user_id: UUID, organization_id: UUID, status: str | None = None
 ) -> list:
-    async with session_for_user(user_id) as db:
-        await _require(db, organization_id, PERM_READ)
-        return list(
-            await offerings_repo.list_offerings(db, organization_id, status=status)
-        )
+    cache_key = _offerings_cache_key(organization_id, user_id, status)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        if cached is _OFFERINGS_DENIED:
+            raise OfferingPermissionError(f"Sin permiso ({PERM_READ}) para esta acción")
+        return cached
+
+    has_perm, offerings = await gather_for_user(
+        user_id,
+        lambda db: offerings_repo.has_permission(db, organization_id, PERM_READ),
+        lambda db: offerings_repo.list_offerings(db, organization_id, status=status),
+    )
+    if not has_perm:
+        cache.set(cache_key, _OFFERINGS_DENIED, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+        raise OfferingPermissionError(f"Sin permiso ({PERM_READ}) para esta acción")
+
+    result = list(offerings)
+    cache.set(cache_key, result, ttl_seconds=_LIST_CACHE_TTL_SECONDS)
+    return result
 
 
 async def get_offering(*, user_id: UUID, organization_id: UUID, offering_id: UUID):
@@ -144,6 +176,7 @@ async def create_offering(
         )
         offering_id = offering.id
         await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
     return offering_id
 
 
@@ -154,7 +187,9 @@ async def update_offering(
         await _require(db, organization_id, PERM_WRITE)
         offering = await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.update_offering(offering, **fields)
+        await recompute_offering_completion_pct(db, offering_id)
         await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
 
 
 async def publish_offering(
@@ -178,6 +213,7 @@ async def publish_offering(
         await offerings_repo.publish_offering(offering)
         await recompute_completion_pct(db, organization_id)
         await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
 
 
 async def set_status(
@@ -190,6 +226,7 @@ async def set_status(
         offering = await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.update_offering(offering, status=status)
         await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
 
 
 async def delete_offering(
@@ -201,6 +238,7 @@ async def delete_offering(
         await offerings_repo.soft_delete_offering(offering)
         await recompute_completion_pct(db, organization_id)
         await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
 
 
 # ─── Taxonomía / industrias / territorio ─────────────────────────────────────
@@ -240,6 +278,7 @@ async def set_taxonomy_nodes(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.set_taxonomy_nodes(db, offering_id, nodes)
+        await recompute_offering_completion_pct(db, offering_id)
         await search_service.reindex_offering(db, offering_id)
 
 
@@ -250,6 +289,30 @@ async def set_industries(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.set_industries(db, offering_id, industry_ids)
+        await recompute_offering_completion_pct(db, offering_id)
+        await search_service.reindex_offering(db, offering_id)
+
+
+async def list_tags(
+    *, user_id: UUID, organization_id: UUID, offering_id: UUID
+) -> list[str]:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_READ)
+        await _get_owned_offering(db, offering_id, organization_id)
+        return await offerings_repo.list_tags(db, offering_id)
+
+
+async def set_tags(
+    *, user_id: UUID, organization_id: UUID, offering_id: UUID, tags: list[str]
+) -> None:
+    # Normaliza (recorta espacios, minúsculas) y dedupea antes de escribir —
+    # evita que "Minería" y "mineria " convivan como tags distintos.
+    normalized = list(dict.fromkeys(t.strip().lower() for t in tags if t.strip()))
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_WRITE)
+        await _get_owned_offering(db, offering_id, organization_id)
+        await offerings_repo.set_tags(db, offering_id, normalized)
+        await recompute_offering_completion_pct(db, offering_id)
         await search_service.reindex_offering(db, offering_id)
 
 
@@ -308,6 +371,7 @@ async def set_pricing(
         await _require(db, organization_id, PERM_WRITE)
         await _get_owned_offering(db, offering_id, organization_id)
         await offerings_repo.upsert_pricing(db, offering_id, **fields)
+        await recompute_offering_completion_pct(db, offering_id)
         await search_service.reindex_offering(db, offering_id)
 
 
@@ -368,6 +432,7 @@ async def upload_media(
             db, offering_id=offering_id, storage_path=storage_path
         )
         media_id = media.id
+        await recompute_offering_completion_pct(db, offering_id)
 
     return {"id": media_id, "url": public_url(bucket=MEDIA_BUCKET, path=storage_path)}
 
@@ -383,11 +448,21 @@ async def delete_media(
             raise OfferingNotFoundError("Archivo no encontrado")
         storage_path = media.storage_path
         await offerings_repo.delete_media(db, media)
+        await recompute_offering_completion_pct(db, offering_id)
 
     try:
         await delete_object(bucket=MEDIA_BUCKET, path=storage_path)
     except StorageError:
         pass
+
+
+async def _signed_url_or_none(storage_path: str) -> str | None:
+    try:
+        return await create_signed_url(
+            bucket=DOCUMENTS_BUCKET, path=storage_path, expires_in=3600
+        )
+    except StorageError:
+        return None
 
 
 async def list_documents(
@@ -396,18 +471,16 @@ async def list_documents(
     async with session_for_user(user_id) as db:
         await _require(db, organization_id, PERM_READ)
         rows = await offerings_repo.list_documents(db, offering_id)
-        result = []
-        for r in rows:
-            try:
-                url = await create_signed_url(
-                    bucket=DOCUMENTS_BUCKET, path=r.storage_path, expires_in=3600
-                )
-            except StorageError:
-                url = None
-            result.append(
-                {"id": r.id, "name": r.name, "is_public": r.is_public, "url": url}
-            )
-        return result
+
+    # Firmar cada URL es una llamada HTTP a Supabase Storage, no una consulta
+    # a la BD — antes iba secuencial (un round trip HTTP por documento);
+    # mismo patrón ya aplicado en services/requirements.py y
+    # services/documents.py, en paralelo, no encadenado.
+    urls = await asyncio.gather(*(_signed_url_or_none(r.storage_path) for r in rows))
+    return [
+        {"id": r.id, "name": r.name, "is_public": r.is_public, "url": url}
+        for r, url in zip(rows, urls, strict=True)
+    ]
 
 
 async def upload_document(
@@ -481,6 +554,131 @@ async def delete_document(
         await delete_object(bucket=DOCUMENTS_BUCKET, path=storage_path)
     except StorageError:
         pass
+
+
+# ─── Ofertas (deals) ──────────────────────────────────────────────────────────
+
+
+def _is_deal_active(d: dict) -> bool:
+    now = datetime.now(timezone.utc)
+    if d["cancelled_at"] is not None:
+        return False
+    if d["expires_at"] is not None and d["expires_at"] <= now:
+        return False
+    if d["stock_quantity"] is not None and (d["stock_remaining"] or 0) <= 0:
+        return False
+    return True
+
+
+def _deal_dict(deal) -> dict:
+    return {
+        "id": deal.id,
+        "offering_id": deal.offering_id,
+        "deal_price": deal.deal_price,
+        "original_price": deal.original_price,
+        "currency_code": deal.currency_code,
+        "unit_code": deal.unit_code,
+        "stock_quantity": deal.stock_quantity,
+        "stock_remaining": deal.stock_remaining,
+        "expires_at": deal.expires_at,
+        "cancelled_at": deal.cancelled_at,
+        "created_at": deal.created_at,
+    }
+
+
+async def list_deals(
+    *, user_id: UUID, organization_id: UUID, offering_id: UUID
+) -> list[dict]:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_READ)
+        await _get_owned_offering(db, offering_id, organization_id)
+        rows = await offerings_repo.list_deals(db, offering_id)
+        result = [_deal_dict(r) for r in rows]
+    for r in result:
+        r["is_active"] = _is_deal_active(r)
+    return result
+
+
+async def list_org_deals(*, user_id: UUID, organization_id: UUID) -> list[dict]:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_READ)
+        rows = await offerings_repo.list_org_deals(db, organization_id)
+    for r in rows:
+        r["is_active"] = _is_deal_active(r)
+    return rows
+
+
+async def create_deal(
+    *,
+    user_id: UUID,
+    organization_id: UUID,
+    offering_id: UUID,
+    deal_price: float,
+    currency_code: str,
+    original_price: float | None = None,
+    unit_code: str | None = None,
+    stock_quantity: int | None = None,
+    expires_at: object = None,
+) -> UUID:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_WRITE)
+        await _get_owned_offering(db, offering_id, organization_id)
+
+        existing = await offerings_repo.get_active_deal(db, offering_id)
+        if existing is not None:
+            raise OfferingConflictError(
+                "Ya hay una oferta vigente para esta publicación — cancélala antes de crear otra"
+            )
+
+        deal = await offerings_repo.create_deal(
+            db,
+            offering_id=offering_id,
+            deal_price=deal_price,
+            original_price=original_price,
+            currency_code=currency_code,
+            unit_code=unit_code,
+            stock_quantity=stock_quantity,
+            stock_remaining=stock_quantity,
+            expires_at=expires_at,
+            created_by=user_id,
+        )
+        deal_id = deal.id
+        await search_service.reindex_offering(db, offering_id)
+    cache.invalidate_prefix(_offerings_cache_prefix(organization_id))
+    return deal_id
+
+
+async def update_deal_stock(
+    *,
+    user_id: UUID,
+    organization_id: UUID,
+    offering_id: UUID,
+    deal_id: UUID,
+    stock_remaining: int,
+) -> None:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_WRITE)
+        await _get_owned_offering(db, offering_id, organization_id)
+        deal = await offerings_repo.get_deal(db, deal_id, offering_id=offering_id)
+        if deal is None:
+            raise OfferingNotFoundError("Oferta no encontrada")
+        if deal.stock_quantity is None:
+            raise OfferingValidationError("Esta oferta es por fecha límite, no por stock")
+        await offerings_repo.update_deal_stock(deal, stock_remaining)
+        await search_service.reindex_offering(db, offering_id)
+
+
+async def cancel_deal(
+    *, user_id: UUID, organization_id: UUID, offering_id: UUID, deal_id: UUID
+) -> None:
+    async with session_for_user(user_id) as db:
+        await _require(db, organization_id, PERM_WRITE)
+        await _get_owned_offering(db, offering_id, organization_id)
+        deal = await offerings_repo.get_deal(db, deal_id, offering_id=offering_id)
+        if deal is None:
+            raise OfferingNotFoundError("Oferta no encontrada")
+        await offerings_repo.cancel_deal(deal)
+        await search_service.reindex_offering(db, offering_id)
 
 
 # ─── Valores de atributos dinámicos ───────────────────────────────────────────

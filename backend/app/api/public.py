@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -25,6 +25,15 @@ router = APIRouter()
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
+
+# Cache-busting de /static/css/public.css: el navegador no revalida un
+# <link> sin query string entre reloads normales aunque el archivo cambie
+# en disco (visto en vivo — un cambio de CSS no se notaba hasta un hard
+# refresh). mtime del CSS al arrancar el proceso es un valor estable por
+# despliegue y cambia solo cuando el archivo realmente cambia.
+templates.env.globals["static_version"] = int(
+    (Path(__file__).resolve().parent.parent / "static/css/public.css").stat().st_mtime
+)
 
 
 def _money(value: float | str | None) -> str:
@@ -78,6 +87,7 @@ def _set_visitor_cookie(
 async def discover_page(
     request: Request,
     session: PublicSession,
+    background_tasks: BackgroundTasks,
     q: str | None = None,
     category: str | None = None,
     industry: str | None = None,
@@ -97,6 +107,7 @@ async def discover_page(
         admin_division_ids=division_ids,
         page=max(page, 1),
         page_size=page_size,
+        background_tasks=background_tasks,
     )
 
     def build_url(**overrides: str | int | None) -> str:
@@ -146,33 +157,27 @@ async def discover_page(
         "taxonomy_nodes": [
             {
                 "label": f["label"],
+                "value": str(f["value"]),
                 "count": f["count"],
                 "active": str(f["value"]) == category,
-                "url": build_url(
-                    category=None if str(f["value"]) == category else str(f["value"])
-                ),
             }
             for f in result["facets"]["taxonomy_nodes"]
         ],
         "industries": [
             {
                 "label": f["label"],
+                "value": str(f["value"]),
                 "count": f["count"],
                 "active": str(f["value"]) == industry,
-                "url": build_url(
-                    industry=None if str(f["value"]) == industry else str(f["value"])
-                ),
             }
             for f in result["facets"]["industries"]
         ],
         "admin_divisions": [
             {
                 "label": f["label"],
+                "value": str(f["value"]),
                 "count": f["count"],
                 "active": str(f["value"]) == region,
-                "url": build_url(
-                    region=None if str(f["value"]) == region else str(f["value"])
-                ),
             }
             for f in result["facets"]["admin_divisions"]
         ],
@@ -201,11 +206,48 @@ async def discover_page(
     )
 
 
+def build_profile_context(profile: dict, *, preview: bool = False) -> dict:
+    """Contexto para `provider_profile.html` — compartido entre la página
+    pública (`provider_profile_page`, abajo) y la vista previa autenticada
+    que el dueño ve desde "Mi empresa" (`app/api/v1/organizations.py`), para
+    que ambas rendericen exactamente lo mismo y no se desincronicen."""
+    org = profile["organization"]
+    logo = next((m for m in profile["media"] if m["media_type"] == "LOGO"), None)
+    current_year = datetime.now(timezone.utc).year
+
+    return {
+        "org": org,
+        "logo_url": logo["url"] if logo else None,
+        "logo_shape": (logo["logo_shape"] if logo else None) or "SQUARE",
+        "industries": [i["name"] for i in profile["industries"]],
+        "economic_activities": [a["description"] for a in profile["economic_activities"]],
+        "headquarters": profile["headquarters"],
+        "years_experience": (
+            current_year - org.founded_year if org.founded_year else None
+        ),
+        "territories": [t["name"] for t in profile["territories"]],
+        "offerings": profile["offerings"],
+        "certifications": [
+            profile["certification_types"][c.certification_type_id].name
+            for c in profile["certifications"]
+            if c.certification_type_id in profile["certification_types"]
+        ],
+        "case_studies": profile["case_studies"],
+        "public_contacts": profile["contacts"],
+        "trust_badges": profile["badges"],
+        "is_accredited": any(
+            b["code"] == "ACREDITADO_BASE" for b in profile["badges"]
+        ),
+        "current_year": current_year,
+        "preview": preview,
+    }
+
+
 @router.get("/proveedores/{slug}", response_class=HTMLResponse)
 async def provider_profile_page(
-    request: Request, session: PublicSession, slug: str
+    request: Request, slug: str, background_tasks: BackgroundTasks
 ) -> HTMLResponse:
-    profile = await search_service.get_public_organization(session, slug)
+    profile = await search_service.get_public_organization(None, slug)
     if profile is None:
         return HTMLResponse(
             "<!doctype html><html lang=es-CL><head><meta charset=utf-8>"
@@ -219,39 +261,26 @@ async def provider_profile_page(
         )
 
     org = profile["organization"]
-    logo = next((m for m in profile["media"] if m["media_type"] == "LOGO"), None)
-
     response = templates.TemplateResponse(
-        request,
-        "provider_profile.html",
-        {
-            "org": org,
-            "logo_url": logo["url"] if logo else None,
-            "industries": [i["name"] for i in profile["industries"]],
-            "territories": [t["name"] for t in profile["territories"]],
-            "offerings": profile["offerings"],
-            "certifications": [
-                profile["certification_types"][c.certification_type_id].name
-                for c in profile["certifications"]
-                if c.certification_type_id in profile["certification_types"]
-            ],
-            "case_studies": profile["case_studies"],
-            "public_contacts": profile["contacts"],
-            "trust_badges": profile["badges"],
-            "current_year": datetime.now(timezone.utc).year,
-        },
+        request, "provider_profile.html", build_profile_context(profile)
     )
 
     visitor_hash = _visitor_hash(request)
     _set_visitor_cookie(response, request, visitor_hash)
-    await search_service.record_profile_view(
+    # Analytics puro — no hay razón para que quien visita la ficha espere a
+    # que esto termine. Antes iba `await` acá mismo: 2 escrituras más
+    # (~0.6-0.9s cada una, misma latencia de red medida en /discover) en el
+    # camino crítico de la página más lenta del sitio público.
+    offering_ids = [item["offering"].id for item in profile["offerings"]]
+    background_tasks.add_task(
+        search_service.record_profile_view,
         organization_id=org.id,
         viewer_organization_id=None,
         source=request.query_params.get("ref"),
         visitor_hash=visitor_hash,
     )
-    offering_ids = [item["offering"].id for item in profile["offerings"]]
-    await search_service.record_offering_views(
+    background_tasks.add_task(
+        search_service.record_offering_views,
         offering_ids=offering_ids,
         organization_id=org.id,
         viewer_organization_id=None,
