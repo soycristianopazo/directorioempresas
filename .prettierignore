@@ -1,7 +1,0 @@
-.next
-node_modules
-supabase/.temp
-supabase/.branches
-src/lib/supabase/database.types.ts
-package-lock.json
-*.md
