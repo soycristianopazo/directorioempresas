@@ -241,3 +241,52 @@ SELECT
 FROM V_ACRED_CICLO
 GROUP BY ORDEN_DIA, DIA, HORA
 ORDER BY ORDEN_DIA, HORA;
+
+
+/* -----------------------------------------------------------------------------
+   03.11 · COLA vs TRABAJO EFECTIVO  → GRÁFICO: barras apiladas por mes
+   ★ Habilitado por el estado "En Revisión" (id 1) del catálogo real. ★
+
+   Parte el tiempo de revisión en dos:
+     · DIAS_EN_COLA          = solicitud → alguien la toma  (problema de CAPACIDAD)
+     · DIAS_TRABAJO_EFECTIVO = tomada    → resuelta         (problema de COMPLEJIDAD)
+
+   La lectura es directa y define la acción:
+     cola alta  → faltan revisores o falta priorización de la bandeja
+     trabajo alto → el expediente es difícil, o falta criterio/estándar claro
+   Sumar ambos sin distinguir es lo que hace que se contrate gente cuando el
+   problema era el criterio, o al revés.
+----------------------------------------------------------------------------- */
+SELECT
+    MES_SOLICITUD                                                  AS MES,
+    COUNT(*)                                                       AS CICLOS,
+    COUNT(FECHA_EN_REVISION)                                       AS CON_TOMA_REGISTRADA,
+    ROUND(AVG(DIAS_EN_COLA), 2)                                    AS PROM_DIAS_COLA,
+    ROUND(AVG(DIAS_TRABAJO_EFECTIVO), 2)                           AS PROM_DIAS_TRABAJO,
+    ROUND(AVG(DIAS_CICLO), 2)                                      AS PROM_DIAS_TOTAL,
+    ROUND(100 * AVG(DIAS_EN_COLA)
+              / NULLIF(AVG(DIAS_CICLO), 0), 1)                     AS PCT_TIEMPO_EN_COLA,
+    CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(
+        GROUP_CONCAT(DIAS_EN_COLA ORDER BY DIAS_EN_COLA SEPARATOR ','),
+        ',', GREATEST(1, CEILING(COUNT(DIAS_EN_COLA) * 0.90))), ',', -1)
+        AS DECIMAL(10,2))                                          AS P90_DIAS_COLA
+FROM V_ACRED_CICLO
+WHERE MES_SOLICITUD IS NOT NULL
+GROUP BY MES_SOLICITUD
+ORDER BY MES_SOLICITUD;
+
+
+/* -----------------------------------------------------------------------------
+   03.12 · COLA vs TRABAJO POR REVISOR
+   Distingue al revisor que tiene la bandeja llena del que se demora en resolver.
+----------------------------------------------------------------------------- */
+SELECT
+    COALESCE(REVISOR, '(sin revisor)')                             AS REVISOR,
+    COUNT(*)                                                       AS CICLOS,
+    ROUND(AVG(DIAS_EN_COLA), 2)                                    AS PROM_DIAS_COLA,
+    ROUND(AVG(DIAS_TRABAJO_EFECTIVO), 2)                           AS PROM_DIAS_TRABAJO,
+    ROUND(AVG(DIAS_CICLO), 2)                                      AS PROM_DIAS_TOTAL
+FROM V_ACRED_CICLO
+WHERE FECHA_DESENLACE IS NOT NULL
+GROUP BY REVISOR
+ORDER BY PROM_DIAS_TOTAL DESC;

@@ -57,7 +57,17 @@ SELECT
           OR UPPER(e.DESCRIPCION) LIKE '%HABILITAD%'
           OR UPPER(e.DESCRIPCION) LIKE '%VIGENTE%'      THEN 1
         ELSE 0
-    END AS ES_TERMINAL
+    END AS ES_TERMINAL,
+    /* Subtipo: la BD real tiene TRES formas distintas de rechazo y conviene
+       no fundirlas en una sola barra del gráfico. */
+    CASE
+        WHEN UPPER(e.DESCRIPCION) LIKE '%BLOQUEO POR ACREDITADOR%' THEN 'BLOQUEO_ACREDITADOR'
+        WHEN UPPER(e.DESCRIPCION) LIKE '%BLOQUE%'                  THEN 'BLOQUEO'
+        WHEN UPPER(e.DESCRIPCION) LIKE '%NO ACREDITAD%'            THEN 'NO_ACREDITADO'
+        WHEN UPPER(e.DESCRIPCION) LIKE '%RECHAZ%'                  THEN 'RECHAZO'
+        WHEN UPPER(e.DESCRIPCION) LIKE '%OBSERV%'                  THEN 'OBSERVADO'
+        ELSE NULL
+    END AS SUBTIPO_RECHAZO
 FROM DB_LEGAV_ESTATUS_ACREDITACION e;
 
 
@@ -96,6 +106,7 @@ SELECT
     est.FECHA_REGISTRO                                  AS FECHA_DESENLACE,
     cls.GRUPO_ESTADO                                    AS RESULTADO_CICLO,
     cls.DESCRIPCION                                     AS ESTADO_DESENLACE,
+    cls.SUBTIPO_RECHAZO,
     est.OBSERVACION                                     AS OBS_DESENLACE,
     est.ID_DOCUMENTO_BLOQUEO,
     doc.NOMBRE                                          AS DOCUMENTO_BLOQUEO,
@@ -107,6 +118,13 @@ SELECT
     ROUND(TIMESTAMPDIFF(HOUR, sol.FECHA_REGISTRO, est.FECHA_REGISTRO)/24, 2)
                                                                   AS DIAS_CICLO,
     TIMESTAMPDIFF(HOUR, sol.FECHA_REGISTRO, sol.FECHA_REVISION)   AS HORAS_HASTA_REVISION,
+
+    /* ---- cola vs trabajo efectivo (usa el estado "En Revisión") ---- */
+    rev.FECHA_REGISTRO                                            AS FECHA_EN_REVISION,
+    ROUND(TIMESTAMPDIFF(HOUR, sol.FECHA_REGISTRO, rev.FECHA_REGISTRO)/24, 2)
+                                                                  AS DIAS_EN_COLA,
+    ROUND(TIMESTAMPDIFF(HOUR, rev.FECHA_REGISTRO, est.FECHA_REGISTRO)/24, 2)
+                                                                  AS DIAS_TRABAJO_EFECTIVO,
 
     /* ---- orden del ciclo dentro del caso: 1 = primer envío ---- */
     (SELECT COUNT(*) FROM DB_LEGAV_SOLICITUD_ACREDITACION s2
@@ -149,6 +167,26 @@ LEFT JOIN (
 /* fila de estado correspondiente a ese desenlace */
 LEFT JOIN DB_LEGAV_STATUS_ACREDITACION_PERSONA est
        ON est.ID_ESTATUS = d.ID_ESTATUS_DESENLACE
+
+/* Primera toma de carga ("En Revisión") dentro de ESTE ciclo.
+   Permite partir la revisión en tiempo de cola y tiempo de trabajo efectivo:
+   son dos problemas distintos (capacidad vs complejidad) con soluciones distintas. */
+LEFT JOIN (
+    SELECT  s.ID_SOLICITUD,
+            MIN(e.ID_ESTATUS) AS ID_ESTATUS_REVISION
+    FROM DB_LEGAV_SOLICITUD_ACREDITACION s
+    JOIN DB_LEGAV_STATUS_ACREDITACION_PERSONA e
+          ON e.ID_ASIGNACION  = s.ID_ASIGNACION
+         AND e.FECHA_REGISTRO >= s.FECHA_REGISTRO
+    JOIN V_ACRED_ESTADO_CLASIF c
+          ON c.ID_ESTADO_ACREDITACION = e.ID_ESTADO_ACREDITACION
+         AND c.GRUPO_ESTADO = 'EN_PROCESO'
+    WHERE s.FECHA_REGISTRO IS NOT NULL
+    GROUP BY s.ID_SOLICITUD
+) r ON r.ID_SOLICITUD = sol.ID_SOLICITUD
+LEFT JOIN DB_LEGAV_STATUS_ACREDITACION_PERSONA rev
+       ON rev.ID_ESTATUS = r.ID_ESTATUS_REVISION
+      AND (d.ID_ESTATUS_DESENLACE IS NULL OR rev.ID_ESTATUS < d.ID_ESTATUS_DESENLACE)
 LEFT JOIN V_ACRED_ESTADO_CLASIF cls ON cls.ID_ESTADO_ACREDITACION = est.ID_ESTADO_ACREDITACION
 LEFT JOIN DB_LEGAV_ADMINISTRATIVOS  adm ON adm.ID_USU_LEGAV = est.ID_USU_LEGAV
 LEFT JOIN DB_DOCUMENTO_ESTANDAR_ACREDITACION doc ON doc.ID_DOCUMENTO = est.ID_DOCUMENTO_BLOQUEO

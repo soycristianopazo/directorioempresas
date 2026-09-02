@@ -136,3 +136,52 @@ LEFT JOIN DB_LEGAV_CAT_ESTANDAR_DOCUMENTAL  cat ON cat.ID_CAT_ESTANDAR = de.ID_C
 GROUP BY dp.ID_DOCUMENTO, de.NOMBRE, cat.NOMBRE, de.REQUERIDO
 ORDER BY CARGAS DESC
 LIMIT 40;
+
+
+/* -----------------------------------------------------------------------------
+   04.7 · MIX DE TIPOS DE RECHAZO POR MES  → GRÁFICO: barras apiladas
+   ★ La BD tiene TRES formas distintas de rechazar, no una. ★
+
+   ⚠ HALLAZGO A VERIFICAR EN EL INFORME: según el catálogo, los estados de
+   bloqueo entraron en operación DESPUÉS que el resto:
+       En Revisión / Acreditado  → desde 2025-04-02
+       No Acreditado             → desde 2025-06-06
+       Bloqueo                   → desde 2025-08-11
+       Bloqueo por Acreditador   → desde 2025-08-18
+   Es decir, la taxonomía cambió a mitad del periodo. Esta query lo hace visible:
+   si "Bloqueo" no sustituyó a "No Acreditado" sino que se sumó, entonces la
+   serie de tasa de rechazo NO es comparable antes y después de agosto 2025, y
+   hay que decirlo en el informe en vez de mostrar un salto y llamarlo deterioro.
+----------------------------------------------------------------------------- */
+SELECT
+    DATE_FORMAT(est.FECHA_REGISTRO, '%Y-%m')                       AS MES,
+    COUNT(*)                                                       AS RECHAZOS_TOTAL,
+    SUM(cls.SUBTIPO_RECHAZO = 'NO_ACREDITADO')                     AS NO_ACREDITADO,
+    SUM(cls.SUBTIPO_RECHAZO = 'BLOQUEO')                           AS BLOQUEO,
+    SUM(cls.SUBTIPO_RECHAZO = 'BLOQUEO_ACREDITADOR')               AS BLOQUEO_ACREDITADOR,
+    COUNT(DISTINCT est.ID_ASIGNACION)                              AS TRABAJADORES_AFECTADOS,
+    SUM(est.ID_DOCUMENTO_BLOQUEO IS NOT NULL)                      AS CON_DOC_IDENTIFICADO,
+    ROUND(100 * SUM(est.ID_DOCUMENTO_BLOQUEO IS NOT NULL)
+              / COUNT(*), 1)                                       AS PCT_DOC_IDENTIFICADO
+FROM DB_LEGAV_STATUS_ACREDITACION_PERSONA est
+JOIN V_ACRED_ESTADO_CLASIF cls ON cls.ID_ESTADO_ACREDITACION = est.ID_ESTADO_ACREDITACION
+WHERE cls.GRUPO_ESTADO = 'RECHAZADO'
+GROUP BY MES
+ORDER BY MES;
+
+
+/* -----------------------------------------------------------------------------
+   04.8 · ¿QUÉ TIPO DE RECHAZO CUESTA MÁS CARO?
+   Cruza el subtipo con cuánto demora la EECC en corregir y volver a enviar.
+----------------------------------------------------------------------------- */
+SELECT
+    SUBTIPO_RECHAZO,
+    COUNT(*)                                                       AS CICLOS,
+    ROUND(AVG(DIAS_CICLO), 2)                                      AS DIAS_HASTA_RECHAZO,
+    ROUND(AVG(DIAS_EN_COLA), 2)                                    AS DIAS_EN_COLA,
+    COUNT(DISTINCT ID_ASIGNACION)                                  AS TRABAJADORES,
+    COUNT(DISTINCT EMPRESA)                                        AS EMPRESAS
+FROM V_ACRED_CICLO
+WHERE RESULTADO_CICLO = 'RECHAZADO'
+GROUP BY SUBTIPO_RECHAZO
+ORDER BY CICLOS DESC;

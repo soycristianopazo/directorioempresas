@@ -79,17 +79,45 @@ Esa descomposición es la que cierra la discusión de "el mandante se demora" co
 | `04_retrabajo_bloqueos.sql` | causas de rechazo y documentos que bloquean | |
 | `05_backlog_flujo.sql` | qué está atascado hoy | |
 
-### Paso obligatorio antes de creer cualquier número
+### Catálogo de estados — CONFIRMADO contra la BD real
 
-Ejecutar **`00_diagnostico.sql` query 00.1** y revisar el catálogo real de estados.
-La clasificación `APROBADO / RECHAZADO / EN_PROCESO / BAJA` de `V_ACRED_ESTADO_CLASIF`
-está hecha por patrones de texto sobre `DESCRIPCION` porque el dump vino sin datos.
-Es una hipótesis razonable, no un hecho: si aparece un estado que cae en `OTRO`, o
-mal clasificado, se corrige el `CASE` de la vista **una sola vez** y todo el resto
-del pack se ajusta solo.
+El catálogo se extrajo de producción y la clasificación quedó **verificada, sin
+ajustes necesarios**. Son 5 estados, 3.450 registros, periodo abr-2025 → sep-2026:
 
-Ya está resuelto el caso peligroso: `NO ACREDITADO` y `DESACREDITADO` se atrapan
-*antes* que el patrón genérico `%ACREDITAD%`, así que no se cuentan como aprobación.
+| ID | Descripción | Grupo | Terminal | Subtipo | Usos | Desde |
+|---|---|---|---|---|---|---|
+| 2 | Acreditado | `APROBADO` | sí | — | 1.093 | 2025-04-02 |
+| 1 | En Revisión | `EN_PROCESO` | no | — | 946 | 2025-04-02 |
+| 4 | Bloqueo | `RECHAZADO` | sí | `BLOQUEO` | 821 | **2025-08-11** |
+| 3 | No Acreditado | `RECHAZADO` | sí | `NO_ACREDITADO` | 547 | 2025-06-06 |
+| 5 | Bloqueo por Acreditador | `RECHAZADO` | sí | `BLOQUEO_ACREDITADOR` | 43 | **2025-08-18** |
+
+El caso peligroso está resuelto: `No Acreditado` se atrapa *antes* que el patrón
+genérico `%ACREDITAD%`, así que no se cuenta como aprobación.
+
+#### ⚠ Hallazgo: la taxonomía cambió a mitad del periodo
+
+Los estados de bloqueo **no existían al inicio**. `Bloqueo` aparece recién el
+11-ago-2025, cuatro meses después que el resto, y en un año ya acumula 821 usos
+contra los 547 de `No Acreditado`, que lleva más tiempo operando.
+
+Esto tiene una consecuencia directa sobre el informe: **la serie de tasa de rechazo
+no es comparable antes y después de agosto de 2025**. Si en el gráfico mensual
+aparece un salto en agosto, lo más probable es que sea un cambio de registro y no
+un deterioro del proceso. La query `04.7` está hecha para distinguir una cosa de la
+otra: muestra si `Bloqueo` *sustituyó* a `No Acreditado` o se *sumó* a él. Hay que
+resolver eso antes de publicar cualquier conclusión sobre tendencia de rechazos.
+
+#### Lo que habilitó el estado "En Revisión"
+
+Con 946 usos, `En Revisión` (id 1) permite partir el tiempo de revisión en dos
+tramos que exigen acciones opuestas:
+
+- **Días en cola** — solicitud → alguien la toma. Es un problema de **capacidad**.
+- **Días de trabajo efectivo** — tomada → resuelta. Es un problema de **complejidad**.
+
+Sumarlos sin distinguir es lo que lleva a contratar más revisores cuando el problema
+era la falta de criterio, o al revés. Queries `03.11` y `03.12`.
 
 ---
 
@@ -119,16 +147,20 @@ lead time mediano · P90 · % de acreditación · envíos por caso · % de retra
 - Histograma de distribución de tiempos *(03.5)*
 - Cumplimiento de SLA por mes, barras apiladas *(03.6)*
 - Descomposición del lead time: preparación / revisión / corrección *(03.7)*
+- Cola vs trabajo efectivo: ¿capacidad o complejidad? *(03.11)*
 
 **Sección 2 · Dónde se pierde el tiempo**
 - Impacto del retrabajo: días adicionales por cada rechazo *(04.1)*
 - Pareto de documentos que bloquean *(04.2)*
 - First Pass Yield mensual *(04.5)*
+- Mix de tipos de rechazo y quiebre de taxonomía en ago-2025 *(04.7)*
+- Qué subtipo de rechazo cuesta más caro *(04.8)*
 
 **Sección 3 · Actores**
 - Ranking de empresas contratistas *(03.3)*
 - Comparativa por mandante y gerencia *(03.4)*
 - Carga y tiempo de respuesta por revisor *(03.9)*
+- Cola vs trabajo efectivo por revisor *(03.12)*
 
 **Sección 4 · Situación actual y acciones**
 - Backlog por antigüedad *(05.1)*
@@ -180,7 +212,13 @@ La prueba crítica es el caso 2: el ciclo 1 cierra con el **rechazo del 2-ene**,
 con la aprobación del 7-ene. Ese es el error que arruina la mayoría de los informes
 de acreditación y aquí está controlado.
 
-Una advertencia honesta: el dump venía **sin una sola fila de datos** (solo
-estructura). Todo lo anterior valida sintaxis y lógica contra datos de control, no
-contra la realidad de la base. Los resultados de `00_diagnostico.sql` sobre la BD
-real pueden obligar a ajustar la clasificación de estados.
+Con el catálogo real ya cargado se verificó además la lógica de cola/trabajo con un
+caso de dos ciclos: cada ciclo toma **su propia** marca de `En Revisión` y no la del
+ciclo siguiente, y en los tres ciclos se cumple `cola + trabajo = tiempo del ciclo`.
+
+Una advertencia honesta que sigue vigente: el dump venía **sin filas de datos** (solo
+estructura), y de producción solo se ha cargado el catálogo de estados. La lógica
+está validada contra datos de control, no contra el volumen real. Falta correr
+`00_diagnostico.sql` completo — en particular la query **00.3 (calidad de datos)** —
+para saber cuántos registros tienen fechas nulas o invertidas antes de publicar
+cifras.
