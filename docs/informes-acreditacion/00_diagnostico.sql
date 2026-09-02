@@ -1,0 +1,132 @@
+/* =============================================================================
+   BLOQUE 00 · DIAGNÓSTICO PREVIO
+   BD: legavcl_caitan  ·  MySQL 5.7.44
+   -----------------------------------------------------------------------------
+   OBJETIVO: antes de medir nada, saber (a) qué significan los estados,
+   (b) cuánta data hay y de qué periodo, y (c) qué tan sucia está.
+   Ningún KPI de tiempos es creíble si no se corre esto primero.
+
+   IMPORTANTE (MySQL 5.7): no hay CTEs ni funciones de ventana.
+   Todo el pack está escrito con tablas derivadas y subconsultas correlacionadas.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   00.1 · CATÁLOGO DE ESTADOS  ←←← EJECUTAR ESTA PRIMERO Y PEGARME EL RESULTADO
+   Sin esto, la clasificación APROBADO / RECHAZADO del bloque 01 es una hipótesis.
+----------------------------------------------------------------------------- */
+SELECT
+    e.ID_ESTADO_ACREDITACION,
+    e.DESCRIPCION,
+    COUNT(s.ID_ESTATUS)                AS VECES_USADO,
+    MIN(s.FECHA_REGISTRO)              AS PRIMER_USO,
+    MAX(s.FECHA_REGISTRO)              AS ULTIMO_USO
+FROM DB_LEGAV_ESTATUS_ACREDITACION e
+LEFT JOIN DB_LEGAV_STATUS_ACREDITACION_PERSONA s
+       ON s.ID_ESTADO_ACREDITACION = e.ID_ESTADO_ACREDITACION
+GROUP BY e.ID_ESTADO_ACREDITACION, e.DESCRIPCION
+ORDER BY VECES_USADO DESC;
+
+
+/* -----------------------------------------------------------------------------
+   00.2 · VOLUMETRÍA Y VENTANA TEMPORAL
+   Define el periodo del informe y detecta tablas vacías o congeladas.
+----------------------------------------------------------------------------- */
+SELECT 'SOLICITUD_ACREDITACION' AS TABLA, COUNT(*) AS FILAS,
+       MIN(FECHA_REGISTRO) AS DESDE, MAX(FECHA_REGISTRO) AS HASTA
+FROM DB_LEGAV_SOLICITUD_ACREDITACION
+UNION ALL
+SELECT 'STATUS_ACREDITACION_PERSONA', COUNT(*),
+       MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_STATUS_ACREDITACION_PERSONA
+UNION ALL
+SELECT 'ASIG_PERSONAL_ACUERDO', COUNT(*),
+       MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_ASIG_PERSONAL_ACUERDO
+UNION ALL
+SELECT 'HISTORIAL_ACREDITACION', COUNT(*),
+       MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_HISTORIAL_ACREDITACION
+UNION ALL
+SELECT 'DOCUMENTO_PERSONAL', COUNT(*),
+       MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_DOCUMENTO_PERSONAL
+UNION ALL
+SELECT 'PERSONAL_ACREDITACION', COUNT(*), NULL, NULL
+FROM DB_LEGAV_PERSONAL_ACREDITACION
+UNION ALL
+SELECT 'CONTRATO_EMP', COUNT(*), MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_CONTRATO_EMP
+UNION ALL
+SELECT 'EMPRESA', COUNT(*), MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_EMPRESA
+UNION ALL
+SELECT 'MANDANTE', COUNT(*), MIN(FECHA_REGISTRO), MAX(FECHA_REGISTRO)
+FROM DB_LEGAV_MANDANTE;
+
+
+/* -----------------------------------------------------------------------------
+   00.3 · CALIDAD DE DATOS (cada fila que salga aquí distorsiona los KPIs)
+----------------------------------------------------------------------------- */
+SELECT 'Solicitudes con FECHA_REGISTRO nula' AS HALLAZGO, COUNT(*) AS CASOS
+FROM DB_LEGAV_SOLICITUD_ACREDITACION WHERE FECHA_REGISTRO IS NULL
+UNION ALL
+SELECT 'Solicitudes con FECHA_REVISION anterior a la solicitud', COUNT(*)
+FROM DB_LEGAV_SOLICITUD_ACREDITACION
+WHERE FECHA_REVISION IS NOT NULL AND FECHA_REGISTRO IS NOT NULL
+  AND FECHA_REVISION < FECHA_REGISTRO
+UNION ALL
+SELECT 'Solicitudes con ID_ASIGNACION huérfano', COUNT(*)
+FROM DB_LEGAV_SOLICITUD_ACREDITACION s
+LEFT JOIN DB_LEGAV_ASIG_PERSONAL_ACUERDO a ON a.ID_ASIGNACION = s.ID_ASIGNACION
+WHERE a.ID_ASIGNACION IS NULL
+UNION ALL
+SELECT 'Estados con FECHA_REGISTRO nula', COUNT(*)
+FROM DB_LEGAV_STATUS_ACREDITACION_PERSONA WHERE FECHA_REGISTRO IS NULL
+UNION ALL
+SELECT 'Asignaciones sin NINGUNA solicitud', COUNT(*)
+FROM DB_LEGAV_ASIG_PERSONAL_ACUERDO a
+LEFT JOIN DB_LEGAV_SOLICITUD_ACREDITACION s ON s.ID_ASIGNACION = a.ID_ASIGNACION
+WHERE s.ID_SOLICITUD IS NULL
+UNION ALL
+SELECT 'Asignaciones sin NINGUN estado registrado', COUNT(*)
+FROM DB_LEGAV_ASIG_PERSONAL_ACUERDO a
+LEFT JOIN DB_LEGAV_STATUS_ACREDITACION_PERSONA s ON s.ID_ASIGNACION = a.ID_ASIGNACION
+WHERE s.ID_ESTATUS IS NULL
+UNION ALL
+SELECT 'Asignaciones sin persona asociada', COUNT(*)
+FROM DB_LEGAV_ASIG_PERSONAL_ACUERDO WHERE ID_PERSONA IS NULL
+UNION ALL
+SELECT 'Asignaciones sin contrato asociado', COUNT(*)
+FROM DB_LEGAV_ASIG_PERSONAL_ACUERDO WHERE ID_REG_ACUERDOS IS NULL
+UNION ALL
+SELECT 'Trabajadores con RUT duplicado', COUNT(*) FROM (
+    SELECT RUT FROM DB_LEGAV_PERSONAL_ACREDITACION
+    GROUP BY RUT HAVING COUNT(*) > 1
+) d
+UNION ALL
+SELECT 'Estados aprobados anteriores a su solicitud (reloj negativo)', COUNT(*)
+FROM DB_LEGAV_STATUS_ACREDITACION_PERSONA s
+JOIN (
+    SELECT ID_ASIGNACION, MIN(FECHA_REGISTRO) AS F_SOL
+    FROM DB_LEGAV_SOLICITUD_ACREDITACION
+    WHERE FECHA_REGISTRO IS NOT NULL
+    GROUP BY ID_ASIGNACION
+) x ON x.ID_ASIGNACION = s.ID_ASIGNACION
+WHERE s.FECHA_REGISTRO < x.F_SOL;
+
+
+/* -----------------------------------------------------------------------------
+   00.4 · ¿HAY MÁS DE UN CICLO POR TRABAJADOR? (dimensiona el retrabajo)
+----------------------------------------------------------------------------- */
+SELECT
+    n.SOLICITUDES_POR_ASIGNACION,
+    COUNT(*)                                                      AS ASIGNACIONES,
+    ROUND(100 * COUNT(*) / (SELECT COUNT(DISTINCT ID_ASIGNACION)
+                            FROM DB_LEGAV_SOLICITUD_ACREDITACION), 1) AS PCT
+FROM (
+    SELECT ID_ASIGNACION, COUNT(*) AS SOLICITUDES_POR_ASIGNACION
+    FROM DB_LEGAV_SOLICITUD_ACREDITACION
+    GROUP BY ID_ASIGNACION
+) n
+GROUP BY n.SOLICITUDES_POR_ASIGNACION
+ORDER BY n.SOLICITUDES_POR_ASIGNACION;
